@@ -17,6 +17,7 @@
 #include <ctime>
 #include "fstream"
 #include "sstream"
+#include "pthread.h"
 
 #include <unistd.h>
 #include <errno.h>
@@ -49,6 +50,7 @@ using namespace std;
 #define BACKLOG 10   // how many pending connections queue will hold
 
 void sigchld_handler(int s);
+void* initiate_connections(void*);
 
 class Process
 {
@@ -64,10 +66,14 @@ private:
 
 public:
     Process();
+    void set_fd(int incoming_port, int new_fd);
+    string get_listen_port_no(int _pid);
+
+    int return_in_addr(struct sockaddr *sa);
     void read_config(string filename = CONFIG_FILE);
-    int server();
-    int client(int);
+    // int server();
     void initiate_connections();
+    int client(int);
     void print();
 
 };

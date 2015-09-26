@@ -23,13 +23,23 @@ Process::Process(): vc(), delay(N, 0), fd(N, 0), send_port_no(N), listen_port_no
 }
 
 // get sockaddr, IPv4 or IPv6:
-int get_in_addr(struct sockaddr *sa)
+int Process::return_in_addr(struct sockaddr *sa)
 {
     if (sa->sa_family == AF_INET) {
         return (((struct sockaddr_in*)sa)->sin_port);
     }
 
     return (((struct sockaddr_in6*)sa)->sin6_port);
+}
+
+string Process::get_listen_port_no(int _pid)
+{
+    return listen_port_no[_pid];
+}
+
+void Process::set_fd(int incoming_port, int new_fd)
+{
+    fd[port_pid_map[incoming_port]] = new_fd;
 }
 
 void Process::read_config(string filename)
@@ -87,8 +97,10 @@ void Process::read_config(string filename)
     fin.close();
 }
 
-int Process::server()
+void* server(void* _P)
 {
+    Process *P = (Process *)_P;
+
     int sockfd, new_fd;  // listen on sock_fd, new connection on new_fd
     struct addrinfo hints, *servinfo, *p;
     struct sockaddr_storage their_addr; // connector's address information
@@ -103,7 +115,7 @@ int Process::server()
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE; // use my IP
 
-    if ((rv = getaddrinfo(NULL, listen_port_no[PID].c_str(), &hints, &servinfo)) != 0)
+    if ((rv = getaddrinfo(NULL, (P->get_listen_port_no(PID)).c_str(), &hints, &servinfo)) != 0)
     {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
         exit (1);
@@ -166,9 +178,9 @@ int Process::server()
         }
 
         // inet_ntop(their_addr.ss_family,
-        //           get_in_addr((struct sockaddr *)&their_addr),
+        //           return_in_addr((struct sockaddr *)&their_addr),
         //           s, sizeof s);
-        int incoming_port = ntohs(get_in_addr((struct sockaddr *)&their_addr));
+        int incoming_port = ntohs(P->return_in_addr((struct sockaddr *)&their_addr));
         printf("server: got connection from %d\n", incoming_port);
 
         if (!fork())
@@ -176,23 +188,14 @@ int Process::server()
             close(sockfd); // child doesn't need the listener
 
             // add the fd for this process to fd vector for future communication
-            fd[port_pid_map[incoming_port]] = new_fd;
-            // char buf[MAXDATASIZE];
-            // if ((numbytes = recv(new_fd, buf, MAXDATASIZE - 1, 0)) == -1) {
-            //     perror("recv");
-            //     exit(1);
-            // }
-            // buf[numbytes] = '\0';
-            // cout << "Yo\n";
-            // if (send(new_fd, "Hello, world!", 13, 0) == -1)
-            //     perror("send");
-            close(new_fd);
+            P->set_fd(incoming_port, new_fd);
+            // close(new_fd);
             exit(0);
         }
         close(new_fd);  // parent doesn't need this
     }
 
-    return 0;
+    pthread_exit(NULL);
 }
 
 int Process::client(int _pid)
@@ -257,7 +260,7 @@ int Process::client(int _pid)
 
     // set up addrinfo for server
     int numbytes;
-    char buf[MAXDATASIZE];
+    // char buf[MAXDATASIZE];
     struct addrinfo *servinfo;
     char s[INET6_ADDRSTRLEN];
 
@@ -288,34 +291,24 @@ int Process::client(int _pid)
         return 2;
     }
 
-    // inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr),
+    // inet_ntop(p->ai_family, return_in_addr((struct sockaddr *)p->ai_addr),
     //           s, sizeof s);
-    int outgoing_port = ntohs(get_in_addr((struct sockaddr *)p->ai_addr));
-    printf("clientinfo: connecting to %d\n", outgoing_port);
+    int outgoing_port = ntohs(return_in_addr((struct sockaddr *)p->ai_addr));
+    printf("client: connecting to %d\n", outgoing_port);
 
     freeaddrinfo(servinfo); // all done with this structure
     fd[port_pid_map[outgoing_port]] = sockfd;
 
-    if ((numbytes = recv(sockfd, buf, MAXDATASIZE - 1, 0)) == -1) {
-        perror("recv");
-        exit(1);
-    }
+    // if ((numbytes = recv(sockfd, buf, MAXDATASIZE - 1, 0)) == -1) {
+    //     perror("recv");
+    //     exit(1);
+    // }
 
-    buf[numbytes] = '\0';
+    // buf[numbytes] = '\0';
 
-    printf("client: received '%s'\n", buf);
+    // printf("client: received '%s'\n", buf);
 
-    close(sockfd);
-
-}
-
-void Process::initiate_connections()
-{
-    // every process initiates connect to every process with pid < self.pid, including self
-    for (int i = 0; i <= PID; ++i)
-    {
-        client(i);
-    }
+    // close(sockfd);
 }
 
 void Process::print()
@@ -331,6 +324,15 @@ void Process::print()
     }
 }
 
+void Process::initiate_connections()
+{
+    // every process initiates connect to every process with pid < self.pid, including self
+    for (int i = 0; i <= PID; ++i)
+    {
+        client(i);
+    }
+}
+
 void sigchld_handler(int s)
 {
     // waitpid() might overwrite errno, so we save and restore it:
@@ -343,10 +345,24 @@ void sigchld_handler(int s)
 
 int main(int argc, char const *argv[])
 {
-    Process p;
-    p.read_config(CONFIG_FILE);
+    // Process P;
+    Process *P = new Process;
+    P->read_config(CONFIG_FILE);
     // p.print();
-    p.server();
+
+    pthread_t server_thread;
+    int thread_s = pthread_create(&server_thread, NULL, server, (void *)P);
+
+    if (thread_s)
+    {
+        cout << "Error:unable to create thread," << thread_s << endl;
+        return 1;
+    }
+
+    P->initiate_connections();
+
+    pthread_exit(NULL);
+    // Pserver();
     // p.initiate_connections();
     return 0;
 }
