@@ -9,6 +9,7 @@
 #include <cmath>
 #include <vector>
 #include <utility>
+#include <algorithm>
 #include <queue>
 #include <stack>
 #include <map>
@@ -18,6 +19,7 @@
 #include "fstream"
 #include "sstream"
 #include "pthread.h"
+#include "time.h"
 
 #include <unistd.h>
 #include <errno.h>
@@ -31,9 +33,12 @@
 #include <signal.h>
 
 using namespace std;
+
 #define PR(x) cout << #x " = " << x << "\n";
-#define N 5
+#define N 3
 #define CONFIG_FILE "config.txt"
+const string ST_BR_MSG = "ST_BR";
+
 #define LISTEN_PORT0 "10666"  // the port on which p0 listens for incoming connections
 #define LISTEN_PORT1 "11666"  // the port on which p1 listens for incoming connections
 #define LISTEN_PORT2 "12666"  // the port on which p2 listens for incoming connections
@@ -48,9 +53,12 @@ using namespace std;
 
 #define MAXDATASIZE 100 // max number of bytes we can get at once 
 #define BACKLOG 10   // how many pending connections queue will hold
+#define LOG_FILE "log"
 
 void sigchld_handler(int s);
-void* initiate_connections(void*);
+void* start_broadcast(void*);
+void* server(void*);
+void* receive(void* _P);
 
 class Process
 {
@@ -64,17 +72,38 @@ private:
     std::vector<string> send_port_no;
     std::map<int, int> port_pid_map;
 
+
 public:
+    time_t start_time;
+
     Process();
     void set_fd(int incoming_port, int new_fd);
+    void set_fd_by_pid(int _pid, int new_fd);
+
     string get_listen_port_no(int _pid);
+    time_t get_br_time(int);
+    int get_fd(int _pid);
+    int get_br_time_size();
+    int get_port_pid_map(int port);
+
 
     int return_in_addr(struct sockaddr *sa);
     void read_config(string filename = CONFIG_FILE);
-    // int server();
     void initiate_connections();
     int client(int);
     void print();
+    void wait_for_st_br_msg();
 
+
+    void log_br(string msg, int pid, time_t t);
+    void log_rcv(string msg, int pid, time_t t);
+
+
+};
+
+struct Arg
+{
+    Process *P;
+    int pid;
 };
 
