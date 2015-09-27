@@ -10,10 +10,8 @@
 #include <vector>
 #include <utility>
 #include <algorithm>
-#include <queue>
-#include <stack>
 #include <map>
-#include <set>
+#include <list>
 #include <cstring>
 #include <ctime>
 #include "fstream"
@@ -92,6 +90,7 @@ private:
     std::map<int, int> port_pid_map;
     std::vector<int> vc;
     std::vector<int> cd;
+    std::list<MsgObj> delv_buf;
 
 
 public:
@@ -121,8 +120,17 @@ public:
     void extract_vc(string msg, string &body, std::vector<int> &vc_msg);
     string construct_msg(int _pid, int msg_counter, string &msg_body);
 
+
     void vc_update_send(int _pid);
     void vc_update_recv(std::vector<int> &vc_msg, int _pid);
+
+
+    void add_to_delv_buf(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<int> &vc_msg);
+    bool can_deliver(std::vector<int> &vc_msg, int source_pid);
+    void deliver(MsgObj& M);
+    void causal_delv_handler();
+
+
 
 
 

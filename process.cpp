@@ -2,7 +2,9 @@
 #define PID 0
 pthread_mutex_t fd_lock;
 pthread_mutex_t msg_buf_lock;
-pthread_mutex_t vc_update_lock;
+pthread_mutex_t vc_lock;
+pthread_mutex_t cd_lock;
+pthread_mutex_t delv_buf_lock;
 
 Process::Process(): vc(N, 0), cd(N, 0), delay(N, 0), fd(N, -1), send_port_no(N), listen_port_no(N)
 {
@@ -415,7 +417,7 @@ string Process::construct_msg(int _pid, int msg_counter, string &msg_body)
     ss.str("");
     ss << msg_counter;
     msg = msg + ss.str();
-    
+
     msg_body = msg;
 
     for (int i = 0; i < N; ++i)
@@ -426,6 +428,27 @@ string Process::construct_msg(int _pid, int msg_counter, string &msg_body)
     }
 
     return msg;
+}
+
+void self_send(const char buf[MAXDATASIZE], int pid, Process* P)
+{
+    cout << PID << "####" << "Msg rcvd from P" << pid << "-" << buf << "on sockfd=" << P->get_fd(pid) << endl;
+
+    int rcv_after_delay = time(NULL) - (P->start_time) + P->get_delay(pid);
+    string msg_body;
+    std::vector<int> vc_msg;
+
+    P->extract_vc(string(buf), msg_body, vc_msg);   //extract VC stamped with the msg
+
+    // add receive event to msg log buf
+    P->msg_handler(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1);
+    P->vc_update_recv(vc_msg, PID); // update VC on receive event
+
+    // check if this message can be delivered immediately
+    // if yes, then deliver, add deliver event to msg log buffer
+    // else add msg to the delivery buf associated with causal delivery protocol
+    P->add_to_delv_buf(msg_body, DELIVER, pid, PID, -1, rcv_after_delay, -1, vc_msg);
+    // P->log_rcv(string(buf), PID, time(NULL) - (P->start_time));
 }
 
 void* start_broadcast(void* _P)
@@ -441,16 +464,20 @@ void* start_broadcast(void* _P)
         // cout<<"t="<<time(NULL) - (P->start_time)<<endl;
         if ((time(NULL) - (P->start_time)) == (P->get_br_time(i)))
         {
+            // update vc before send so that updated vc can be timestamped with sent msg
+            // this is not the ideal way, but we assume that all sends are perfect
+            // if send command below fails, we exit anyway.
+            P->vc_update_send(PID);
             string msg_body;
             string msg = P->construct_msg(PID, msg_counter, msg_body);
 
             for (int j = 0; j < N; ++j)
             {
-                // if (j == PID)
-                // {
-                //     // cout << PID << "#"<< "Not sending to self..." << endl;
-                //     continue;
-                // }
+                if (j == PID)   //special hack for sending message to self
+                {
+                    self_send(msg.c_str(), PID, P);
+                    continue;
+                }
                 cout << PID << "#" << "P" << j << P->get_fd(j) << endl;
                 if (send(P->get_fd(j), msg.c_str(), msg.size(), 0) == -1)
                 {
@@ -464,7 +491,6 @@ void* start_broadcast(void* _P)
             }
             //should ideally use time(NULL)-(P->start_time)
             P->msg_handler(msg_body, SEND, PID, -1, P->get_br_time(i), -1, -1);
-            P->vc_update_send(PID);
             // P->log_br(msg, PID, P->get_br_time(i));
             msg_counter++;
             i++;
@@ -479,24 +505,25 @@ void* start_broadcast(void* _P)
 
 void Process::vc_update_send(int _pid)
 {
-    pthread_mutex_lock(&vc_update_lock);
+    pthread_mutex_lock(&vc_lock);
     vc[_pid]++;
-    pthread_mutex_unlock(&vc_update_lock);
+    pthread_mutex_unlock(&vc_lock);
 }
 
 void Process::vc_update_recv(std::vector<int> &vc_msg, int _pid)
 {
-    pthread_mutex_lock(&vc_update_lock);
+    pthread_mutex_lock(&vc_lock);
     for (int i = 0; i < N; ++i)
     {
         vc[i] = max(vc[i], vc_msg[i]);
     }
     vc[_pid]++;
-    pthread_mutex_unlock(&vc_update_lock);
+    pthread_mutex_unlock(&vc_lock);
 }
 
 void Process::extract_vc(string msg, string &body, std::vector<int> &vc_msg)
 {
+    cout << msg << endl;
     int n = msg.size();
     istringstream iss(msg);
     iss >> body;
@@ -506,6 +533,7 @@ void Process::extract_vc(string msg, string &body, std::vector<int> &vc_msg)
     {
         vc_msg.push_back(temp);
     }
+    cout << endl;
 }
 
 void* receive(void* argument)
@@ -539,15 +567,130 @@ void* receive(void* argument)
             string msg_body;
             std::vector<int> vc_msg;
 
-            P->extract_vc(string(buf), msg_body, vc_msg);
+            P->extract_vc(string(buf), msg_body, vc_msg);   //extract VC stamped with the msg
+
+            // add receive event to msg log buf
             P->msg_handler(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1);
-            P->vc_update_recv(vc_msg, PID);
+            P->vc_update_recv(vc_msg, PID); // update VC on receive event
+
+            // check if this message can be delivered immediately
+            // if yes, then deliver, add deliver event to msg log buffer
+            // else add msg to the delivery buf associated with causal delivery protocol
+            P->add_to_delv_buf(msg_body, DELIVER, pid, PID, -1, rcv_after_delay, -1, vc_msg);
             // P->log_rcv(string(buf), PID, time(NULL) - (P->start_time));
         }
         usleep(100 * 1000);
     }
     cout << PID << "#" << "receive thread exiting for P" << pid << endl;
     pthread_exit(NULL);
+}
+
+void Process::add_to_delv_buf(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<int> &vc_msg)
+{
+    MsgObj M(msg, type, source_pid, dest_pid, send_time, recv_time, delv_time, vc_msg);
+
+    //check if msg can be delivered
+    if (can_deliver(vc_msg, source_pid))
+    {
+        cout << "CAN DELV:" << M.msg << "went right through" << endl;
+        deliver(M);
+
+        // since cd was updated
+        // call causal delivery handler function to check if some msg
+        // in delivery buffer can now be delivered
+        causal_delv_handler();
+    }
+    else
+    {
+        cout << "DELV BUF:" << M.msg << "pushed in" << endl;
+        // can't deliver at this moment
+        // add message to the delivery buffer associated with causal delivery protocol
+        pthread_mutex_lock(&delv_buf_lock);
+        delv_buf.push_back(M);
+        pthread_mutex_unlock(&delv_buf_lock);
+    }
+}
+
+// takes a message's VC and it's source pid
+// returns true if the message can be delivered
+// otherwise returns false
+bool Process::can_deliver(std::vector<int> &vc_msg, int source_pid)
+{
+    bool ans = true;
+
+    cout << "CAN DELIVER" << PID << endl;
+    PR(cd[source_pid])
+    PR(vc_msg[source_pid])
+
+    pthread_mutex_lock(&cd_lock);
+    if (cd[source_pid] != vc_msg[source_pid] - 1)
+        ans = false;
+
+    if (ans)
+    {
+        for (int k = 0; k < N; ++k)
+        {
+            if (k == source_pid)
+                continue;
+            PR(k)
+            PR(cd[k])
+            PR(vc_msg[k])
+            if (cd[k] < vc_msg[k])
+            {
+                ans = false;
+                break;
+            }
+        }
+    }
+    pthread_mutex_unlock(&cd_lock);
+
+    return ans;
+}
+
+// deliver message M
+// adds deliver event to log buffer
+// updates cd
+void Process::deliver(MsgObj& M)
+{
+    cout << "DELIVER:" << M.msg << endl;
+    M.delv_time = time(NULL) - start_time;
+
+    // add deliver event to log buffer
+    msg_handler(M.msg, M.type, M.source_pid, M.dest_pid, M.send_time, M.recv_time, M.delv_time);
+
+    //update cd
+    pthread_mutex_lock(&cd_lock);
+    cd[M.source_pid] = M.vc[M.source_pid];
+    pthread_mutex_unlock(&cd_lock);
+}
+
+// iterates over all messages in delivery buffer
+// and checks which messages can be delivered now
+void Process::causal_delv_handler()
+{
+    pthread_mutex_lock(&delv_buf_lock);
+
+    std::list<MsgObj>::iterator it = delv_buf.begin();
+    while (it != delv_buf.end())
+    {
+        if (can_deliver(it->vc, it->source_pid))
+        {
+            deliver(*it);
+
+            // remove this message from the deliver buffer
+            delv_buf.erase(it);
+
+            // need to start from the beginning of the list
+            // because delivery of this message render some prev message deliverable
+            it = delv_buf.begin();
+        }
+        else
+        {
+            it++;
+        }
+    }
+
+    pthread_mutex_lock(&delv_buf_lock);
 }
 
 void Process::msg_handler(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time)
@@ -576,6 +719,7 @@ void Process::msg_handler(string msg, MsgObjType type, int source_pid, int dest_
     }
 
     pthread_mutex_unlock(&msg_buf_lock);
+
 }
 
 // void Process::log_br(string msg, int pid, time_t t)
@@ -654,7 +798,8 @@ void* logger(void* _P)
                     }
                     if (it->type == DELIVER)
                     {
-                        //SC::TODO
+                        pid = it->dest_pid;
+                        cout << "LOGGER: deliver case" << endl;
                     }
                     write_to_log(it->msg, pid, mit->first, it->type);
 
@@ -664,7 +809,7 @@ void* logger(void* _P)
             }
         }
         pthread_mutex_unlock(&msg_buf_lock);
-        usleep(900 * 1000);
+        usleep(500 * 1000);
     }
     pthread_exit(NULL);
 }
@@ -696,7 +841,19 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
-    if (pthread_mutex_init(&vc_update_lock, NULL) != 0)
+    if (pthread_mutex_init(&vc_lock, NULL) != 0)
+    {
+        printf("\n mutex init failed\n");
+        return 1;
+    }
+
+    if (pthread_mutex_init(&cd_lock, NULL) != 0)
+    {
+        printf("\n mutex init failed\n");
+        return 1;
+    }
+
+    if (pthread_mutex_init(&delv_buf_lock, NULL) != 0)
     {
         printf("\n mutex init failed\n");
         return 1;
