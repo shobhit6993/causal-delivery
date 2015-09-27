@@ -58,6 +58,8 @@ void* start_broadcast(void*);
 void* server(void*);
 void* receive(void* _P);
 void* logger(void* _P);
+void* recv_buf_poller(void* _P);
+
 
 typedef enum
 {
@@ -94,6 +96,7 @@ private:
 
 
 public:
+    std::map<time_t, std::vector<MsgObj> > recv_buf;
     std::map<time_t, std::vector<MsgObj> > log_buf;
     time_t start_time;
 
@@ -123,6 +126,7 @@ public:
 
     void vc_update_send(int _pid);
     void vc_update_recv(std::vector<int> &vc_msg, int _pid);
+    void delay_receipt(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<int> &vc_msg);
 
 
     void add_to_delv_buf(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<int> &vc_msg);

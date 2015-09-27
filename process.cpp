@@ -5,6 +5,7 @@ pthread_mutex_t log_buf_lock;
 pthread_mutex_t vc_lock;
 pthread_mutex_t cd_lock;
 pthread_mutex_t delv_buf_lock;
+pthread_mutex_t recv_buf_lock;
 
 Process::Process(): vc(N, 0), cd(N, 0), delay(N, 0), fd(N, -1), send_port_no(N), listen_port_no(N)
 {
@@ -441,16 +442,15 @@ void self_send(const char buf[MAXDATASIZE], int pid, Process* P)
     P->extract_vc(string(buf), msg_body, vc_msg);   //extract VC stamped with the msg
 
     // add receive event to msg log buf
-    P->msg_handler(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1);
+    // P->msg_handler(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1);
     // no need to update VC on receive at this moment.
     // VC will be updated on delivery, because for VC, recv means actually delivered
     // P->vc_update_recv(vc_msg, PID); // update VC on receive event
 
-    // check if this message can be delivered immediately
-    // if yes, then deliver, add deliver event to msg log buffer
-    // else add msg to the delivery buf associated with causal delivery protocol
-    P->add_to_delv_buf(msg_body, DELIVER, pid, PID, -1, rcv_after_delay, -1, vc_msg);
-    // P->log_rcv(string(buf), PID, time(NULL) - (P->start_time));
+    // P->add_to_delv_buf(msg_body, DELIVER, pid, PID, -1, rcv_after_delay, -1, vc_msg);
+
+
+    P->delay_receipt(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1, vc_msg);
 }
 
 void* start_broadcast(void* _P)
@@ -572,16 +572,15 @@ void* receive(void* argument)
             P->extract_vc(string(buf), msg_body, vc_msg);   //extract VC stamped with the msg
 
             // add receive event to msg log buf
-            P->msg_handler(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1);
+            // P->msg_handler(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1);
             // no need to update VC on receive at this moment.
             // VC will be updated on delivery, because for VC, recv means actually delivered
             // P->vc_update_recv(vc_msg, PID); // update VC on receive event
 
-            // check if this message can be delivered immediately
-            // if yes, then deliver, add deliver event to msg log buffer
-            // else add msg to the delivery buf associated with causal delivery protocol
-            P->add_to_delv_buf(msg_body, DELIVER, pid, PID, -1, rcv_after_delay, -1, vc_msg);
-            // P->log_rcv(string(buf), PID, time(NULL) - (P->start_time));
+            // P->add_to_delv_buf(msg_body, DELIVER, pid, PID, -1, rcv_after_delay, -1, vc_msg);
+
+
+            P->delay_receipt(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1, vc_msg);
         }
         usleep(100 * 1000);
     }
@@ -589,6 +588,30 @@ void* receive(void* argument)
     pthread_exit(NULL);
 }
 
+void Process::delay_receipt(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<int> &vc_msg)
+{
+    MsgObj M(msg, type, source_pid, dest_pid, send_time, recv_time, delv_time, vc_msg);
+
+    pthread_mutex_lock(&recv_buf_lock);
+
+    if (recv_buf.find(recv_time) != recv_buf.end()) // MsgObj already exists with this timestamp
+    {
+        recv_buf[recv_time].push_back(M);
+    }
+    else
+    {
+        std::vector<MsgObj> v;
+        v.push_back(M);
+        recv_buf.insert(make_pair(recv_time, v));
+    }
+
+    pthread_mutex_unlock(&recv_buf_lock);
+}
+
+
+// check if this message can be delivered immediately
+// if yes, then deliver, add deliver event to msg log buffer
+// else add msg to the delivery buf associated with causal delivery protocol
 void Process::add_to_delv_buf(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<int> &vc_msg)
 {
     MsgObj M(msg, type, source_pid, dest_pid, send_time, recv_time, delv_time, vc_msg);
@@ -778,6 +801,8 @@ void write_to_log(string msg, int pid, time_t t, MsgObjType type)
     fout.close();
 }
 
+// in addition to logging, logger also acts as delay simulator
+// to artificially delay receipt of messages
 void* logger(void* _P)
 {
     Process *P = (Process *)_P;
@@ -823,6 +848,44 @@ void* logger(void* _P)
     pthread_exit(NULL);
 }
 
+void* recv_buf_poller(void* _P)
+{
+    Process *P = (Process *)_P;
+    while (true)
+    {
+        cout << PID << "RECV_BUF:size" << P->recv_buf.size() << endl;
+        pthread_mutex_lock(&recv_buf_lock);
+
+        if (!((P->recv_buf).empty()))
+        {
+            std::map<time_t, vector<MsgObj> >::iterator mit = (P->recv_buf).begin();
+
+            if ((mit->first) == time(NULL) - (P->start_time))
+            {
+                int pid;
+                time_t t;
+                vector<MsgObj>::iterator it = (mit->second).begin();    //iterating over msgobjs
+                while (it != (mit->second).end())
+                {
+                    P->msg_handler(it->msg, RECEIVE, it->source_pid, it->dest_pid, -1, it->recv_time, -1);
+                    // no need to update VC on receive at this moment.
+                    // VC will be updated on delivery, because for VC, recv means actually delivered
+                    // P->vc_update_recv(vc_msg, PID); // update VC on receive event
+
+                    P->add_to_delv_buf(it->msg, DELIVER, it->source_pid, it->dest_pid, -1,
+                                       it->recv_time, -1, it->vc);
+
+                    it++;
+                }
+                (P->recv_buf).erase((P->recv_buf).begin());
+            }
+        }
+        pthread_mutex_unlock(&recv_buf_lock);
+        usleep(500 * 1000);
+    }
+    pthread_exit(NULL);
+}
+
 void sigchld_handler(int s)
 {
     // waitpid() might overwrite errno, so we save and restore it:
@@ -863,6 +926,12 @@ int main(int argc, char const *argv[])
     }
 
     if (pthread_mutex_init(&delv_buf_lock, NULL) != 0)
+    {
+        printf("\n mutex init failed\n");
+        return 1;
+    }
+
+    if (pthread_mutex_init(&recv_buf_lock, NULL) != 0)
     {
         printf("\n mutex init failed\n");
         return 1;
@@ -932,11 +1001,21 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
+    pthread_t recv_buf_thread;
+    rv = pthread_create(&recv_buf_thread, NULL, recv_buf_poller, (void *)P);
+
+    if (rv)
+    {
+        cout << "Error:unable to create thread for logging" << endl;
+        return 1;
+    }
+
     for (int i = 0; i < N; ++i)
     {
         pthread_join(receive_thread[i], &status);
     }
     pthread_join(broadcast_thread, &status);
+    pthread_join(recv_buf_thread, &status);
     pthread_join(logger_thread, &status);
     pthread_join(server_thread, &status);
     pthread_exit(NULL);
