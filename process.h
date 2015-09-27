@@ -86,7 +86,6 @@ class Process
 private:
     std::vector<time_t> delay;
     std::vector<time_t> br_time;
-    // std::vector<int> parent_fd;
     std::vector<int> fd;
     std::vector<string> listen_port_no;
     std::vector<string> send_port_no;
@@ -117,8 +116,15 @@ public:
     int client(int);
     void print();
 
-    void add_to_recv_buffer(string msg, int source_pid, int dest_pid, int rcv_time);
     void msg_handler(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time);
+    void extract_vc(string msg, string &body, std::vector<int> &vc_msg);
+    string construct_msg(int _pid, int msg_counter, string &msg_body);
+
+    void vc_update_send(int _pid);
+    void vc_update_recv(std::vector<int> &vc_msg, int _pid);
+
+
+
 
 
     void log_br(string msg, int pid, time_t t);
@@ -133,3 +139,8 @@ struct Arg
     int pid;
 };
 
+// msg are of the following format (without quotes)
+// "P5:21 12 1 0 100 5"
+// message body, followed by a space, followed by VC of the send event of the message.
+// message body format -- 'P' followed by processID followed by ':' followed by message index (local to each process)
+// VC is a space separated list of whole numbers

@@ -406,6 +406,27 @@ void Process::initiate_connections()
     }
 }
 
+string Process::construct_msg(int _pid, int msg_counter, string &msg_body)
+{
+    stringstream ss;
+    ss << PID;
+    string msg = "P" + ss.str() + ":";
+    ss.str("");
+    ss << msg_counter;
+    msg = msg + ss.str();
+    
+    msg_body = msg;
+
+    for (int i = 0; i < N; ++i)
+    {
+        ss.str("");
+        ss << vc[i];
+        msg = msg + " " + ss.str();
+    }
+
+    return msg;
+}
+
 void* start_broadcast(void* _P)
 {
     Process *P = (Process *)_P;
@@ -419,12 +440,8 @@ void* start_broadcast(void* _P)
         // cout<<"t="<<time(NULL) - (P->start_time)<<endl;
         if ((time(NULL) - (P->start_time)) == (P->get_br_time(i)))
         {
-            stringstream ss;
-            ss << PID;
-            string msg = "P" + ss.str() + ":";
-            ss.str("");
-            ss << msg_counter;
-            msg = msg + ss.str();
+            string msg_body;
+            string msg = P->construct_msg(PID, msg_counter, msg_body);
 
             for (int j = 0; j < N; ++j)
             {
@@ -437,6 +454,7 @@ void* start_broadcast(void* _P)
                 if (send(P->get_fd(j), msg.c_str(), msg.size(), 0) == -1)
                 {
                     cerr << "error sending to process P" << j << endl;
+                    exit(1);
                 }
                 else
                 {
@@ -444,7 +462,8 @@ void* start_broadcast(void* _P)
                 }
             }
             //should ideally use time(NULL)-(P->start_time)
-            P->msg_handler(msg, SEND, PID, -1, P->get_br_time(i), -1, -1);
+            P->msg_handler(msg_body, SEND, PID, -1, P->get_br_time(i), -1, -1);
+            P->vc_update_send(PID);
             // P->log_br(msg, PID, P->get_br_time(i));
             msg_counter++;
             i++;
@@ -455,6 +474,33 @@ void* start_broadcast(void* _P)
     // usleep(100000 * 1000);
 
     pthread_exit(NULL);
+}
+
+void Process::vc_update_send(int _pid)
+{
+    vc[_pid]++;
+}
+
+void Process::vc_update_recv(std::vector<int> &vc_msg, int _pid)
+{
+    for (int i = 0; i < N; ++i)
+    {
+        vc[i] = max(vc[i], vc_msg[i]);
+    }
+    vc[_pid]++;
+}
+
+void Process::extract_vc(string msg, string &body, std::vector<int> &vc_msg)
+{
+    int n = msg.size();
+    istringstream iss(msg);
+    iss >> body;
+    cout << body << endl;
+    int temp;
+    while (iss >> temp)
+    {
+        vc_msg.push_back(temp);
+    }
 }
 
 void* receive(void* argument)
@@ -483,8 +529,14 @@ void* receive(void* argument)
         {
             buf[numbytes] = '\0';
             cout << PID << "#" << "Msg rcvd from P" << pid << "-" << buf << "on sockfd=" << P->get_fd(pid) << endl;
+
             int rcv_after_delay = time(NULL) - (P->start_time) + P->get_delay(pid);
-            P->msg_handler(string(buf), RECEIVE, pid, PID, -1, rcv_after_delay, -1);
+            string msg_body;
+            std::vector<int> vc_msg;
+
+            P->extract_vc(string(buf), msg_body, vc_msg);
+            P->msg_handler(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1);
+            P->vc_update_recv(vc_msg, PID);
             // P->log_rcv(string(buf), PID, time(NULL) - (P->start_time));
         }
         usleep(100 * 1000);
@@ -521,36 +573,31 @@ void Process::msg_handler(string msg, MsgObjType type, int source_pid, int dest_
     pthread_mutex_unlock(&msg_buf_lock);
 }
 
-void Process::add_to_recv_buffer(string msg, int source_pid, int dest_pid, int rcv_time)
-{
+// void Process::log_br(string msg, int pid, time_t t)
+// {
+//     ofstream fout;
+//     stringstream ss;
+//     ss << pid;
+//     string logfile = LOG_FILE + ss.str() + ".txt";
 
-}
+//     fout.open(logfile.c_str(), ios::app);
+//     fout << t << "\t";
+//     fout << "p" << pid << " BRC " << msg << endl;
+//     fout.close();
+// }
 
-void Process::log_br(string msg, int pid, time_t t)
-{
-    ofstream fout;
-    stringstream ss;
-    ss << pid;
-    string logfile = LOG_FILE + ss.str() + ".txt";
+// void Process::log_rcv(string msg, int pid, time_t t)
+// {
+//     ofstream fout;
+//     stringstream ss;
+//     ss << pid;
+//     string logfile = LOG_FILE + ss.str() + ".txt";
 
-    fout.open(logfile.c_str(), ios::app);
-    fout << t << "\t";
-    fout << "p" << pid << " BRC " << msg << endl;
-    fout.close();
-}
-
-void Process::log_rcv(string msg, int pid, time_t t)
-{
-    ofstream fout;
-    stringstream ss;
-    ss << pid;
-    string logfile = LOG_FILE + ss.str() + ".txt";
-
-    fout.open(logfile.c_str(), ios::app);
-    fout << t << "\t";
-    fout << "p" << pid << " REC " << msg << endl;
-    fout.close();
-}
+//     fout.open(logfile.c_str(), ios::app);
+//     fout << t << "\t";
+//     fout << "p" << pid << " REC " << msg << endl;
+//     fout.close();
+// }
 
 void write_to_log(string msg, int pid, time_t t, MsgObjType type)
 {
@@ -680,8 +727,6 @@ int main(int argc, char const *argv[])
         A[i] = new Arg;
         A[i]->P = P;
     }
-    // A->P = P;
-    // usleep(2000 * 1000);
     for (int i = 0; i < N; ++i)
     {
 
@@ -711,15 +756,11 @@ int main(int argc, char const *argv[])
 
     for (int i = 0; i < N; ++i)
     {
-        // cout << "HERE1";
         pthread_join(receive_thread[i], &status);
-        // cout << "HERE2";
     }
     pthread_join(broadcast_thread, &status);
     pthread_join(logger_thread, &status);
     pthread_join(server_thread, &status);
     pthread_exit(NULL);
-    // Pserver();
-    // p.initiate_connections();
     return 0;
 }
