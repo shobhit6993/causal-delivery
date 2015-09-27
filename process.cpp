@@ -519,7 +519,7 @@ void Process::vc_update_recv(std::vector<int> &vc_msg, int _pid)
     {
         vc[i] = max(vc[i], vc_msg[i]);
     }
-    vc[_pid]++;
+    // vc[_pid]++;  //don't increment VC on receive event for causal delivery protocol
     pthread_mutex_unlock(&vc_lock);
 }
 
