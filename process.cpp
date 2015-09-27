@@ -43,14 +43,19 @@ int Process::get_port_pid_map(int port)
     return port_pid_map[port];
 }
 
+string Process::get_send_port_no(int _pid)
+{
+    return send_port_no[_pid];
+}
+
 void Process::set_fd(int incoming_port, int new_fd)
 {
 
-    cout<<"out_set_fd"<<incoming_port<<" "<<new_fd<<" "<<port_pid_map[incoming_port]<<" "<<fd[port_pid_map[incoming_port]]<<endl;
+    // cout<<"out_set_fd"<<incoming_port<<" "<<new_fd<<" "<<port_pid_map[incoming_port]<<" "<<fd[port_pid_map[incoming_port]]<<endl;
     pthread_mutex_lock(&lock);
     if (fd[port_pid_map[incoming_port]] == -1)
     {
-        cout<<"in_set_fd"<<incoming_port<<" "<<new_fd<<endl;
+        // cout<<"in_set_fd"<<incoming_port<<" "<<new_fd<<endl;
         fd[port_pid_map[incoming_port]] = new_fd;
     }
     pthread_mutex_unlock(&lock);
@@ -225,23 +230,23 @@ void* server(void* _P)
             continue;
         }
 
-        // inet_ntop(their_addr.ss_family,
-        //           return_in_addr((struct sockaddr *)&their_addr),
-        //           s, sizeof s);
         int incoming_port = ntohs(P->return_in_addr((struct sockaddr *)&their_addr));
         printf("server %d: got connection from %d\n", PID, incoming_port);
-        P->set_fd(incoming_port, new_fd);
+
+        //update fd only if msg recvd from some other process
+        if (incoming_port != atoi((P->get_send_port_no(PID)).c_str()))
+        {
+            P->set_fd(incoming_port, new_fd);
+        }
 
         cout << "P" << PID << "accepting connection from P" << P->get_port_pid_map(incoming_port) << "using sockfd=" << new_fd << " but using:" << P->get_fd(P->get_port_pid_map(incoming_port)) << endl;
-
-        // add the fd for this process to fd vector for future communication
 
         int child_pid = fork();
         if (child_pid == 0)
         {   // this is the child process
             // close(sockfd); // child doesn't need the listener
             // cout << "FD:A" << new_fd << endl;
-            // if (send(new_fd, ST_BR_MSG.c_str(), ST_BR_MSG.size(), 0) == -1)
+            // if (send(new_fd, "Hello", ST_BR_MSG.size(), 0) == -1)
             //     perror("send");
 
             // cout << "FD:B" << new_fd << endl;
@@ -254,18 +259,6 @@ void* server(void* _P)
             // close(new_fd);
             exit(0);
         }
-        // int returnStatus;
-        // waitpid(child_pid, &returnStatus, 0);
-        // char buf[MAXDATASIZE];
-        //     int numbytes;
-        // if ((numbytes = recv(P->get_fd(0), buf, MAXDATASIZE-1, 0)) == -1) {
-        //         perror("recv");
-        //         exit(1);
-        //     }
-
-        //     buf[numbytes] = '\0';
-
-        //     printf("client: received '%s'\n",buf);
     }
 
     pthread_exit(NULL);
@@ -369,30 +362,19 @@ int Process::client(int _pid)
     int outgoing_port = ntohs(return_in_addr((struct sockaddr *)p->ai_addr));
     printf("client %d: connecting to %d\n", PID, outgoing_port);
     freeaddrinfo(servinfo); // all done with this structure
+
+    // if (_pid != PID)
+    // {
     set_fd_by_pid(_pid, sockfd);
-    cout << "P" << PID << "initiating connection to P" << _pid << "using sockfd=" << sockfd << " but using:" << get_fd(_pid) << endl;
-
-    // fd[port_pid_map[outgoing_port]] = sockfd;
-
-    // if ((numbytes = recv(sockfd, buf, MAXDATASIZE - 1, 0)) == -1) {
-    //     perror("recv");
-    //     exit(1);
     // }
 
-    // buf[numbytes] = '\0';
+    cout << "P" << PID << "initiating connection to P" << _pid << "using sockfd=" << sockfd << " but using:" << get_fd(_pid) << endl;
 
-    // printf("client: received '%s'\n", buf);
-
-    // close(sockfd);
 }
 
 void Process::print()
 {
     cout << PID << "..";
-    // PR(fd[0])
-    // PR(fd[1])
-    // PR(fd[2])
-    // PR(fd[3])
     for (int i = 0; i < N; ++i)
     {
         cout << fd[i] << " ";
@@ -416,40 +398,6 @@ void Process::initiate_connections()
     {
         client(i);
     }
-}
-
-void Process::wait_for_st_br_msg()
-{
-    for (int i = 0; i < N; ++i)
-    {
-        if (i == PID)
-            continue;
-
-        char buf[MAXDATASIZE];
-        int numbytes;
-        cout << PID << "#" << "ST_BR Stuck at" << i << endl;
-        // memset(buf, '\0', MAXDATASIZE);
-        if ((numbytes = recv(get_fd(i), buf, MAXDATASIZE - 1, 0)) == -1)
-        {
-            cerr << PID << "#" << "error in receiving ST_BR for P" << i << endl;
-            exit(1);
-        }
-        else if (numbytes == 0)     //connection closed
-        {
-            cerr << PID << "#" << "Connection closed by P" << i << endl;
-            break;
-        }
-        else
-        {
-            buf[numbytes] = '\0';
-            if (string(buf) == ST_BR_MSG)
-            {
-                cout << PID << "#" << "ST_BR_MSG rcvd from P" << i << "-" << buf << "on sockfd=" << get_fd(i) << endl;
-            }
-        }
-        usleep(100 * 1000);
-    }
-    cout << PID << "#" << "Received ST_BR_MSG from all process" << endl;
 }
 
 void* start_broadcast(void* _P)
@@ -495,7 +443,7 @@ void* start_broadcast(void* _P)
         }
         usleep(100 * 1000);
     }
-    cout << PID << "#" << "start_broadcast thread Sleeping" << endl;
+    cout << PID << "#" << "start_broadcast thread exiting" << endl;
     // usleep(100000 * 1000);
 
     pthread_exit(NULL);
@@ -537,7 +485,7 @@ void* receive(void* argument)
     while (true)
     {
         char buf[MAXDATASIZE];
-        cout << PID << "#" << "Stuck at" << pid << endl;
+        cout << PID << "#" << "Stuck at" << pid << "looking at " << P->get_fd(pid) << endl;
         // memset(buf, '\0', MAXDATASIZE);
         if ((numbytes = recv(P->get_fd(pid), buf, MAXDATASIZE - 1, 0)) == -1)
         {

@@ -85,15 +85,13 @@ public:
     int get_fd(int _pid);
     int get_br_time_size();
     int get_port_pid_map(int port);
-
+    string get_send_port_no(int _pid);
 
     int return_in_addr(struct sockaddr *sa);
     void read_config(string filename = CONFIG_FILE);
     void initiate_connections();
     int client(int);
     void print();
-    void wait_for_st_br_msg();
-
 
     void log_br(string msg, int pid, time_t t);
     void log_rcv(string msg, int pid, time_t t);
