@@ -59,11 +59,31 @@ void sigchld_handler(int s);
 void* start_broadcast(void*);
 void* server(void*);
 void* receive(void* _P);
+void* logger(void* _P);
+
+typedef enum
+{
+    SEND, RECEIVE, DELIVER
+} MsgObjType;
+
+struct MsgObj
+{
+    string msg;
+    std::vector<int> vc;
+    int source_pid;
+    int dest_pid;
+    time_t send_time;
+    time_t recv_time;
+    time_t delv_time;
+
+    MsgObjType type;
+
+    MsgObj(string msg, MsgObjType type, int source_pid = -1, int dest_pid = -1, time_t send_time = -1, time_t recv_time = -1, time_t delv_time = -1, std::vector<int> vc = std::vector<int> (N, -1)) : msg(msg), type(type), source_pid(source_pid), dest_pid(dest_pid), send_time(send_time), recv_time(recv_time), delv_time(delv_time), vc(vc) {};
+};
 
 class Process
 {
 private:
-    std::vector<std::vector<time_t> > vc;
     std::vector<time_t> delay;
     std::vector<time_t> br_time;
     // std::vector<int> parent_fd;
@@ -71,9 +91,11 @@ private:
     std::vector<string> listen_port_no;
     std::vector<string> send_port_no;
     std::map<int, int> port_pid_map;
+    std::vector<int> vc;
 
 
 public:
+    std::map<time_t, std::vector<MsgObj> > msg_buf;
     time_t start_time;
 
     Process();
@@ -86,12 +108,18 @@ public:
     int get_br_time_size();
     int get_port_pid_map(int port);
     string get_send_port_no(int _pid);
+    time_t get_delay(int _pid);
 
-    int return_in_addr(struct sockaddr *sa);
+
+    int return_in_addr(struct sockaddr * sa);
     void read_config(string filename = CONFIG_FILE);
     void initiate_connections();
     int client(int);
     void print();
+
+    void add_to_recv_buffer(string msg, int source_pid, int dest_pid, int rcv_time);
+    void msg_handler(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time);
+
 
     void log_br(string msg, int pid, time_t t);
     void log_rcv(string msg, int pid, time_t t);
@@ -101,7 +129,7 @@ public:
 
 struct Arg
 {
-    Process *P;
+    Process * P;
     int pid;
 };
 

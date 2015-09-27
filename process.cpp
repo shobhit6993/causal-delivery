@@ -1,8 +1,9 @@
 #include "process.h"
 #define PID 0
-pthread_mutex_t lock;
+pthread_mutex_t fd_lock;
+pthread_mutex_t msg_buf_lock;
 
-Process::Process(): vc(), delay(N, 0), fd(N, -1), send_port_no(N), listen_port_no(N)
+Process::Process(): vc(N, 0), delay(N, 0), fd(N, -1), send_port_no(N), listen_port_no(N)
 {
     port_pid_map.insert(make_pair(atoi(SEND_PORT0), 0));
     port_pid_map.insert(make_pair(atoi(SEND_PORT1), 1));
@@ -52,26 +53,26 @@ void Process::set_fd(int incoming_port, int new_fd)
 {
 
     // cout<<"out_set_fd"<<incoming_port<<" "<<new_fd<<" "<<port_pid_map[incoming_port]<<" "<<fd[port_pid_map[incoming_port]]<<endl;
-    pthread_mutex_lock(&lock);
+    pthread_mutex_lock(&fd_lock);
     if (fd[port_pid_map[incoming_port]] == -1)
     {
         // cout<<"in_set_fd"<<incoming_port<<" "<<new_fd<<endl;
         fd[port_pid_map[incoming_port]] = new_fd;
     }
-    pthread_mutex_unlock(&lock);
+    pthread_mutex_unlock(&fd_lock);
 }
 
 void Process::set_fd_by_pid(int _pid, int new_fd)
 {
 
     // cout<<"out_set_fd"<<incoming_port<<" "<<new_fd<<" "<<port_pid_map[incoming_port]<<" "<<fd[port_pid_map[incoming_port]]<<endl;
-    pthread_mutex_lock(&lock);
+    pthread_mutex_lock(&fd_lock);
     if (fd[_pid] == -1)
     {
         // cout<<"in_set_fd"<<incoming_port<<" "<<new_fd<<endl;
         fd[_pid] = new_fd;
     }
-    pthread_mutex_unlock(&lock);
+    pthread_mutex_unlock(&fd_lock);
 }
 
 time_t Process::get_br_time(int i)
@@ -82,15 +83,20 @@ time_t Process::get_br_time(int i)
 int Process::get_fd(int _pid)
 {
     int ret;
-    pthread_mutex_lock(&lock);
+    pthread_mutex_lock(&fd_lock);
     ret = fd[_pid];
-    pthread_mutex_unlock(&lock);
+    pthread_mutex_unlock(&fd_lock);
     return ret;
 }
 
 int Process::get_br_time_size()
 {
     return br_time.size();
+}
+
+time_t Process::get_delay(int _pid)
+{
+    return delay[_pid];
 }
 
 void Process::read_config(string filename)
@@ -437,7 +443,9 @@ void* start_broadcast(void* _P)
                     cout << PID << "#" << "Sent msg from P" << PID << " to P" << j << "-" << msg << "using sockfd=" << P->get_fd(j) << endl;
                 }
             }
-            P->log_br(msg, PID, P->get_br_time(i));
+            //should ideally use time(NULL)-(P->start_time)
+            P->msg_handler(msg, SEND, PID, -1, P->get_br_time(i), -1, -1);
+            // P->log_br(msg, PID, P->get_br_time(i));
             msg_counter++;
             i++;
         }
@@ -447,32 +455,6 @@ void* start_broadcast(void* _P)
     // usleep(100000 * 1000);
 
     pthread_exit(NULL);
-}
-
-void Process::log_br(string msg, int pid, time_t t)
-{
-    ofstream fout;
-    stringstream ss;
-    ss << pid;
-    string logfile = LOG_FILE + ss.str() + ".txt";
-
-    fout.open(logfile.c_str(), ios::app);
-    fout << t << "\t";
-    fout << "p" << pid << " BRC " << msg << endl;
-    fout.close();
-}
-
-void Process::log_rcv(string msg, int pid, time_t t)
-{
-    ofstream fout;
-    stringstream ss;
-    ss << pid;
-    string logfile = LOG_FILE + ss.str() + ".txt";
-
-    fout.open(logfile.c_str(), ios::app);
-    fout << t << "\t";
-    fout << "p" << pid << " REC " << msg << endl;
-    fout.close();
 }
 
 void* receive(void* argument)
@@ -501,11 +483,137 @@ void* receive(void* argument)
         {
             buf[numbytes] = '\0';
             cout << PID << "#" << "Msg rcvd from P" << pid << "-" << buf << "on sockfd=" << P->get_fd(pid) << endl;
-            P->log_rcv(string(buf), PID, time(NULL) - (P->start_time));
+            int rcv_after_delay = time(NULL) - (P->start_time) + P->get_delay(pid);
+            P->msg_handler(string(buf), RECEIVE, pid, PID, -1, rcv_after_delay, -1);
+            // P->log_rcv(string(buf), PID, time(NULL) - (P->start_time));
         }
         usleep(100 * 1000);
     }
     cout << PID << "#" << "receive thread exiting for P" << pid << endl;
+    pthread_exit(NULL);
+}
+
+void Process::msg_handler(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time)
+{
+    MsgObj M(msg, type, source_pid, dest_pid, send_time, recv_time, delv_time);
+
+    time_t indexing_time;
+    if (type == SEND)
+        indexing_time = send_time;
+    if (type == RECEIVE)
+        indexing_time = recv_time;
+    if (type == DELIVER)
+        indexing_time = delv_time;
+
+    pthread_mutex_lock(&msg_buf_lock);
+
+    if (msg_buf.find(indexing_time) != msg_buf.end()) // MsgObj already exists with this timestamp
+    {
+        msg_buf[indexing_time].push_back(M);
+    }
+    else
+    {
+        std::vector<MsgObj> v;
+        v.push_back(M);
+        msg_buf.insert(make_pair(indexing_time, v));
+    }
+
+    pthread_mutex_unlock(&msg_buf_lock);
+}
+
+void Process::add_to_recv_buffer(string msg, int source_pid, int dest_pid, int rcv_time)
+{
+
+}
+
+void Process::log_br(string msg, int pid, time_t t)
+{
+    ofstream fout;
+    stringstream ss;
+    ss << pid;
+    string logfile = LOG_FILE + ss.str() + ".txt";
+
+    fout.open(logfile.c_str(), ios::app);
+    fout << t << "\t";
+    fout << "p" << pid << " BRC " << msg << endl;
+    fout.close();
+}
+
+void Process::log_rcv(string msg, int pid, time_t t)
+{
+    ofstream fout;
+    stringstream ss;
+    ss << pid;
+    string logfile = LOG_FILE + ss.str() + ".txt";
+
+    fout.open(logfile.c_str(), ios::app);
+    fout << t << "\t";
+    fout << "p" << pid << " REC " << msg << endl;
+    fout.close();
+}
+
+void write_to_log(string msg, int pid, time_t t, MsgObjType type)
+{
+    ofstream fout;
+    stringstream ss;
+    ss << pid;
+    string logfile = LOG_FILE + ss.str() + ".txt";
+
+    string temp;
+    if (type == SEND)
+        temp = " BRC ";
+    if (type == RECEIVE)
+        temp = " REC ";
+    if (type == DELIVER)
+        temp = " DLR ";
+
+    fout.open(logfile.c_str(), ios::app);
+    fout << t << "\t";
+    fout << "p" << pid << temp << msg << endl;
+    fout.close();
+}
+
+void* logger(void* _P)
+{
+    Process *P = (Process *)_P;
+    while (true)
+    {
+        cout << PID << "LOGGER:size" << P->msg_buf.size() << endl;
+        pthread_mutex_lock(&msg_buf_lock);
+
+        if (!((P->msg_buf).empty()))
+        {
+            std::map<time_t, vector<MsgObj> >::iterator mit = (P->msg_buf).begin();
+
+            if ((mit->first) == time(NULL) - (P->start_time))
+            {
+                int pid;
+                time_t t;
+                vector<MsgObj>::iterator it = (mit->second).begin();    //iterating over msgobjs
+                while (it != (mit->second).end())
+                {
+                    if (it->type == SEND)
+                    {
+                        pid = it->source_pid;
+                    }
+                    if (it->type == RECEIVE)
+                    {
+                        pid = it->dest_pid;
+                    }
+                    if (it->type == DELIVER)
+                    {
+                        //SC::TODO
+                    }
+                    write_to_log(it->msg, pid, mit->first, it->type);
+
+                    it++;
+                }
+                (P->msg_buf).erase((P->msg_buf).begin());
+            }
+        }
+        pthread_mutex_unlock(&msg_buf_lock);
+        usleep(900 * 1000);
+    }
     pthread_exit(NULL);
 }
 
@@ -524,7 +632,13 @@ int main(int argc, char const *argv[])
     Process *P = new Process;
     P->read_config(CONFIG_FILE);
 
-    if (pthread_mutex_init(&lock, NULL) != 0)
+    if (pthread_mutex_init(&fd_lock, NULL) != 0)
+    {
+        printf("\n mutex init failed\n");
+        return 1;
+    }
+
+    if (pthread_mutex_init(&msg_buf_lock, NULL) != 0)
     {
         printf("\n mutex init failed\n");
         return 1;
@@ -585,15 +699,24 @@ int main(int argc, char const *argv[])
             return 1;
         }
     }
-    // pthread_join(broadcast_thread, &status);
+
+    pthread_t logger_thread;
+    rv = pthread_create(&logger_thread, NULL, logger, (void *)P);
+
+    if (rv)
+    {
+        cout << "Error:unable to create thread for logging" << endl;
+        return 1;
+    }
+
     for (int i = 0; i < N; ++i)
     {
         // cout << "HERE1";
         pthread_join(receive_thread[i], &status);
         // cout << "HERE2";
     }
-
     pthread_join(broadcast_thread, &status);
+    pthread_join(logger_thread, &status);
     pthread_join(server_thread, &status);
     pthread_exit(NULL);
     // Pserver();
