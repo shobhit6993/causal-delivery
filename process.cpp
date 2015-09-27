@@ -2,8 +2,9 @@
 #define PID 0
 pthread_mutex_t fd_lock;
 pthread_mutex_t msg_buf_lock;
+pthread_mutex_t vc_update_lock;
 
-Process::Process(): vc(N, 0), delay(N, 0), fd(N, -1), send_port_no(N), listen_port_no(N)
+Process::Process(): vc(N, 0), cd(N, 0), delay(N, 0), fd(N, -1), send_port_no(N), listen_port_no(N)
 {
     port_pid_map.insert(make_pair(atoi(SEND_PORT0), 0));
     port_pid_map.insert(make_pair(atoi(SEND_PORT1), 1));
@@ -478,16 +479,20 @@ void* start_broadcast(void* _P)
 
 void Process::vc_update_send(int _pid)
 {
+    pthread_mutex_lock(&vc_update_lock);
     vc[_pid]++;
+    pthread_mutex_unlock(&vc_update_lock);
 }
 
 void Process::vc_update_recv(std::vector<int> &vc_msg, int _pid)
 {
+    pthread_mutex_lock(&vc_update_lock);
     for (int i = 0; i < N; ++i)
     {
         vc[i] = max(vc[i], vc_msg[i]);
     }
     vc[_pid]++;
+    pthread_mutex_unlock(&vc_update_lock);
 }
 
 void Process::extract_vc(string msg, string &body, std::vector<int> &vc_msg)
@@ -690,6 +695,13 @@ int main(int argc, char const *argv[])
         printf("\n mutex init failed\n");
         return 1;
     }
+
+    if (pthread_mutex_init(&vc_update_lock, NULL) != 0)
+    {
+        printf("\n mutex init failed\n");
+        return 1;
+    }
+
 
     pthread_t server_thread;
     int rv = pthread_create(&server_thread, NULL, server, (void *)P);

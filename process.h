@@ -91,6 +91,7 @@ private:
     std::vector<string> send_port_no;
     std::map<int, int> port_pid_map;
     std::vector<int> vc;
+    std::vector<int> cd;
 
 
 public:
