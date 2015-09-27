@@ -30,7 +30,7 @@ Process::Process(): vc(N, 0), cd(N, 0), delay(N, 0), fd(N, -1), send_port_no(N),
 }
 
 // get port number
-int Process::return_in_addr(struct sockaddr *sa)
+int Process::return_port_no(struct sockaddr *sa)
 {
     if (sa->sa_family == AF_INET) {
         return (((struct sockaddr_in*)sa)->sin_port);
@@ -56,12 +56,9 @@ string Process::get_send_port_no(int _pid)
 
 void Process::set_fd(int incoming_port, int new_fd)
 {
-
-    // cout<<"out_set_fd"<<incoming_port<<" "<<new_fd<<" "<<port_pid_map[incoming_port]<<" "<<fd[port_pid_map[incoming_port]]<<endl;
     pthread_mutex_lock(&fd_lock);
     if (fd[port_pid_map[incoming_port]] == -1)
     {
-        // cout<<"in_set_fd"<<incoming_port<<" "<<new_fd<<endl;
         fd[port_pid_map[incoming_port]] = new_fd;
     }
     pthread_mutex_unlock(&fd_lock);
@@ -69,12 +66,8 @@ void Process::set_fd(int incoming_port, int new_fd)
 
 void Process::set_fd_by_pid(int _pid, int new_fd)
 {
-
-    // cout<<"out_set_fd"<<incoming_port<<" "<<new_fd<<" "<<port_pid_map[incoming_port]<<" "<<fd[port_pid_map[incoming_port]]<<endl;
-    pthread_mutex_lock(&fd_lock);
     if (fd[_pid] == -1)
     {
-        // cout<<"in_set_fd"<<incoming_port<<" "<<new_fd<<endl;
         fd[_pid] = new_fd;
     }
     pthread_mutex_unlock(&fd_lock);
@@ -104,6 +97,8 @@ time_t Process::get_delay(int _pid)
     return delay[_pid];
 }
 
+// reads config file
+// fills delay and br_time vectors
 void Process::read_config(string filename)
 {
     ifstream fin;
@@ -112,19 +107,25 @@ void Process::read_config(string filename)
     {
         fin.open(filename.c_str());
 
+        time_t m[N][N];
         int i = 0, d;
         while (i < N && !fin.eof())
         {
             for (int j = 0; j < N; ++j)
             {
                 fin >> d;
-                if (i == PID)
-                {
-                    delay[j] = d;
-                }
+                m[i][j] = d;
             }
-
             i++;
+        }
+
+        // all this crap because delay matrix is upper triagular
+        for ( i = 0; i < N; ++i)
+        {
+            if (i <= PID)
+                delay[i] = m[i][PID];
+            else
+                delay[i] = m[PID][i];
         }
 
         i = 0;
@@ -161,6 +162,8 @@ void Process::read_config(string filename)
     fin.close();
 }
 
+// function where process acts as server
+// listens to incoming connect() requests
 void* server(void* _P)
 {
     Process *P = (Process *)_P;
@@ -189,19 +192,19 @@ void* server(void* _P)
     {
         if ((sockfd = socket(p->ai_family, p->ai_socktype,
                              p->ai_protocol)) == -1) {
-            perror("server: socket");
+            perror("server: socket ERROR");
             continue;
         }
 
         if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes,
                        sizeof(int)) == -1) {
-            perror("setsockopt");
+            perror("setsockopt ERROR");
             exit(1);
         }
 
         if (bind(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
             close(sockfd);
-            perror("server: bind");
+            perror("server: bind ERROR");
             continue;
         }
 
@@ -216,7 +219,7 @@ void* server(void* _P)
     }
 
     if (listen(sockfd, BACKLOG) == -1) {
-        perror("listen");
+        perror("listen ERROR");
         exit(1);
     }
 
@@ -228,8 +231,7 @@ void* server(void* _P)
         exit(1);
     }
 
-    cout << "p" << PID << " server: waiting for connections...\n";
-    cout << "p" << PID << "server sockfd=" << sockfd << endl;
+    cout << "pid=" << PID << " server: waiting for connections...\n";
     while (1)
     {   // main accept() loop
         sin_size = sizeof their_addr;
@@ -237,12 +239,12 @@ void* server(void* _P)
         new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
         if (new_fd == -1)
         {
-            perror("accept");
+            perror("accept ERROR");
             continue;
         }
 
-        int incoming_port = ntohs(P->return_in_addr((struct sockaddr *)&their_addr));
-        printf("server %d: got connection from %d\n", PID, incoming_port);
+        int incoming_port = ntohs(P->return_port_no((struct sockaddr *)&their_addr));
+        cout << "pid=" << PID << " server: got connection from " << PID << endl;
 
         //update fd only if msg recvd from some other process
         if (incoming_port != atoi((P->get_send_port_no(PID)).c_str()))
@@ -250,24 +252,11 @@ void* server(void* _P)
             P->set_fd(incoming_port, new_fd);
         }
 
-        cout << "P" << PID << "accepting connection from P" << P->get_port_pid_map(incoming_port) << "using sockfd=" << new_fd << " but using:" << P->get_fd(P->get_port_pid_map(incoming_port)) << endl;
+        cout << "pid=" << PID << " accepting connection from P" << P->get_port_pid_map(incoming_port) << endl;
 
         int child_pid = fork();
         if (child_pid == 0)
         {   // this is the child process
-            // close(sockfd); // child doesn't need the listener
-            // cout << "FD:A" << new_fd << endl;
-            // if (send(new_fd, "Hello", ST_BR_MSG.size(), 0) == -1)
-            //     perror("send");
-
-            // cout << "FD:B" << new_fd << endl;
-
-            // P->set_fd(incoming_port, new_fd);
-
-            // cout << "FD:C" << P->get_fd(P->get_port_pid_map(incoming_port)) << endl;
-            // usleep(100000 * 1000);
-
-            // close(new_fd);
             exit(0);
         }
     }
@@ -275,6 +264,8 @@ void* server(void* _P)
     pthread_exit(NULL);
 }
 
+// function where process acts as client
+// connect()ing to other processes
 int Process::client(int _pid)
 {
     int sockfd;  // listen on sock_fd, new connection on new_fd
@@ -300,19 +291,19 @@ int Process::client(int _pid)
     {
         if ((sockfd = socket(p->ai_family, p->ai_socktype,
                              p->ai_protocol)) == -1) {
-            perror("client: socket");
+            perror("client: socket ERROR");
             continue;
         }
 
         if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes,
                        sizeof(int)) == -1) {
-            perror("setsockopt");
+            perror("setsockopt ERROR");
             exit(1);
         }
 
         if (bind(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
             close(sockfd);
-            perror("client: bind");
+            perror("client: bind ERROR");
             continue;
         }
 
@@ -356,7 +347,7 @@ int Process::client(int _pid)
     {
         if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
             close(sockfd);
-            cerr << "P" << PID << "client: connect error\n";
+            cerr << "pid=" << PID << " client: connect ERROR\n";
             continue;
         }
 
@@ -368,10 +359,8 @@ int Process::client(int _pid)
         return 2;
     }
 
-    // inet_ntop(p->ai_family, return_in_addr((struct sockaddr *)p->ai_addr),
-    //           s, sizeof s);
-    int outgoing_port = ntohs(return_in_addr((struct sockaddr *)p->ai_addr));
-    printf("client %d: connecting to %d\n", PID, outgoing_port);
+    int outgoing_port = ntohs(return_port_no((struct sockaddr *)p->ai_addr));
+    cout << "pid=" << PID << " Client: connecting to " << outgoing_port << endl ;
     freeaddrinfo(servinfo); // all done with this structure
 
     // if (_pid != PID)
@@ -379,29 +368,25 @@ int Process::client(int _pid)
     set_fd_by_pid(_pid, sockfd);
     // }
 
-    cout << "P" << PID << "initiating connection to P" << _pid << "using sockfd=" << sockfd << " but using:" << get_fd(_pid) << endl;
+    cout << "pid=" <<  PID << " initiating connection to P" << _pid << endl;
 
 }
 
+// print function
 void Process::print()
 {
-    cout << PID << "..";
     for (int i = 0; i < N; ++i)
     {
-        cout << fd[i] << " ";
+        cout << delay[i] << " ";
     }
     cout << endl;
-    // for (int i = 0; i < N; ++i)
-    // {
-    //     cout << delay[i] << " ";
-    // }
-    // cout << endl;
-    // for (int i = 0; i < br_time.size(); ++i)
-    // {
-    //     cout << br_time[i] << " ";
-    // }
+    for (int i = 0; i < br_time.size(); ++i)
+    {
+        cout << br_time[i] << " ";
+    }
 }
 
+// call connect() to all process with pid <= self.PID
 void Process::initiate_connections()
 {
     // every process initiates connect to every process with pid < self.pid, including self
@@ -411,6 +396,13 @@ void Process::initiate_connections()
     }
 }
 
+// constructs msg
+// appends VC of parent process to the msg body
+// msg are of the following format (without quotes)
+// "P5:21 12 1 0 100 5"
+// message body, followed by a space, followed by VC of the send event of the message.
+// message body format -- 'P' followed by processID followed by ':' followed by message index (local to each process)
+// VC is a space separated list of whole numbers
 string Process::construct_msg(int _pid, int msg_counter, string &msg_body)
 {
     stringstream ss;
@@ -432,9 +424,10 @@ string Process::construct_msg(int _pid, int msg_counter, string &msg_body)
     return msg;
 }
 
+// send message to self
 void self_send(const char buf[MAXDATASIZE], int pid, Process* P)
 {
-    cout << PID << "####" << "Msg rcvd from P" << pid << "-" << buf << "on sockfd=" << P->get_fd(pid) << endl;
+    cout << "pid=" << PID << " Msg PSUEDO-RECV from P" << pid << "-" << buf << endl;
 
     int rcv_after_delay = time(NULL) - (P->start_time) + P->get_delay(pid);
     string msg_body;
@@ -442,18 +435,14 @@ void self_send(const char buf[MAXDATASIZE], int pid, Process* P)
 
     P->extract_vc(string(buf), msg_body, vc_msg);   //extract VC stamped with the msg
 
-    // add receive event to msg log buf
-    // P->msg_handler(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1);
     // no need to update VC on receive at this moment.
     // VC will be updated on delivery, because for VC, recv means actually delivered
     // P->vc_update_recv(vc_msg, PID); // update VC on receive event
 
-    // P->add_to_delv_buf(msg_body, DELIVER, pid, PID, -1, rcv_after_delay, -1, vc_msg);
-
-
     P->delay_receipt(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1, vc_msg);
 }
 
+// thread to broadcast messages according to br_time vector
 void* start_broadcast(void* _P)
 {
     Process *P = (Process *)_P;
@@ -464,7 +453,6 @@ void* start_broadcast(void* _P)
     int n = P->get_br_time_size();
     while (i < n)
     {
-        // cout<<"t="<<time(NULL) - (P->start_time)<<endl;
         if ((time(NULL) - (P->start_time)) == (P->get_br_time(i)))
         {
             // update vc before send so that updated vc can be timestamped with sent msg
@@ -481,15 +469,14 @@ void* start_broadcast(void* _P)
                     self_send(msg.c_str(), PID, P);
                     continue;
                 }
-                // cout << PID << "#" << "P" << j << P->get_fd(j) << endl;
                 if (send(P->get_fd(j), msg.c_str(), msg.size(), 0) == -1)
                 {
-                    cerr << "error sending to process P" << j << endl;
+                    cerr << "pid=" << PID << " ERROR sending to process P" << j << endl;
                     exit(1);
                 }
                 else
                 {
-                    cout << PID << "#" << "Sent msg from P" << PID << " to P" << j << "-" << msg << "using sockfd=" << P->get_fd(j) << endl;
+                    cout << "pid=" << PID << " Sent msg to P" << j << "-" << msg << endl;
                 }
             }
             //should ideally use time(NULL)-(P->start_time)
@@ -500,12 +487,13 @@ void* start_broadcast(void* _P)
         }
         usleep(100 * 1000);
     }
-    cout << PID << "#" << "start_broadcast thread exiting" << endl;
+    cout << "pid=" << PID << " Start_broadcast thread exiting..." << endl;
     // usleep(100000 * 1000);
 
     pthread_exit(NULL);
 }
 
+// VC update on send event
 void Process::vc_update_send(int _pid)
 {
     pthread_mutex_lock(&vc_lock);
@@ -513,6 +501,7 @@ void Process::vc_update_send(int _pid)
     pthread_mutex_unlock(&vc_lock);
 }
 
+// VC update on receive event
 void Process::vc_update_recv(std::vector<int> &vc_msg, int _pid)
 {
     pthread_mutex_lock(&vc_lock);
@@ -524,21 +513,20 @@ void Process::vc_update_recv(std::vector<int> &vc_msg, int _pid)
     pthread_mutex_unlock(&vc_lock);
 }
 
+// extracts VC vector and msg body from message
 void Process::extract_vc(string msg, string &body, std::vector<int> &vc_msg)
 {
-    cout << msg << endl;
     int n = msg.size();
     istringstream iss(msg);
     iss >> body;
-    cout << body << endl;
     int temp;
     while (iss >> temp)
     {
         vc_msg.push_back(temp);
     }
-    cout << endl;
 }
 
+// one thread for receiving messages from each process
 void* receive(void* argument)
 {
     Arg *A = (Arg*) argument;
@@ -549,22 +537,20 @@ void* receive(void* argument)
     while (true)
     {
         char buf[MAXDATASIZE];
-        // cout << PID << "#" << "Stuck at" << pid << "looking at " << P->get_fd(pid) << endl;
-        // memset(buf, '\0', MAXDATASIZE);
         if ((numbytes = recv(P->get_fd(pid), buf, MAXDATASIZE - 1, 0)) == -1)
         {
-            cerr << PID << "#" << "error in receiving for P" << pid << endl;
+            cerr << "pid=" << PID << " ERROR in receiving for P" << pid << endl;
             exit(1);
         }
         else if (numbytes == 0)     //connection closed
         {
-            cerr << PID << "#" << "Connection closed by P" << pid << endl;
+            cerr << "pid=" << PID << " Connection closed by P" << pid << endl;
             break;
         }
         else
         {
             buf[numbytes] = '\0';
-            cout << PID << "#" << "Msg rcvd from P" << pid << "-" << buf << "on sockfd=" << P->get_fd(pid) << endl;
+            cout << "pid=" << PID << " Msg PSEUDO-RECV from P" << pid << "-" << buf <<  endl;
 
             int rcv_after_delay = time(NULL) - (P->start_time) + P->get_delay(pid);
             string msg_body;
@@ -572,23 +558,20 @@ void* receive(void* argument)
 
             P->extract_vc(string(buf), msg_body, vc_msg);   //extract VC stamped with the msg
 
-            // add receive event to msg log buf
-            // P->msg_handler(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1);
             // no need to update VC on receive at this moment.
             // VC will be updated on delivery, because for VC, recv means actually delivered
             // P->vc_update_recv(vc_msg, PID); // update VC on receive event
-
-            // P->add_to_delv_buf(msg_body, DELIVER, pid, PID, -1, rcv_after_delay, -1, vc_msg);
-
 
             P->delay_receipt(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1, vc_msg);
         }
         usleep(100 * 1000);
     }
-    cout << PID << "#" << "receive thread exiting for P" << pid << endl;
+    cout << "pid=" << PID << " Receive thread exiting for P" << pid << endl;
     pthread_exit(NULL);
 }
 
+// constructs MsgObj
+// adds it to recv buffer
 void Process::delay_receipt(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<int> &vc_msg)
 {
     MsgObj M(msg, type, source_pid, dest_pid, send_time, recv_time, delv_time, vc_msg);
@@ -620,7 +603,7 @@ void Process::add_to_delv_buf(string msg, MsgObjType type, int source_pid, int d
     //check if msg can be delivered
     if (can_deliver(vc_msg, source_pid))
     {
-        cout << "CAN DELV:" << M.msg << "went right through" << endl;
+        cout << "pid=" << PID << " CAN DELV:" << M.msg << " went right through" << endl;
         deliver(M);
 
         // since cd was updated
@@ -630,7 +613,7 @@ void Process::add_to_delv_buf(string msg, MsgObjType type, int source_pid, int d
     }
     else
     {
-        cout << PID << "DELV BUF:" << M.msg << "pushed in" << endl;
+        cout << "pid=" << PID << " DELV BUF:" << M.msg << " pushed in" << endl;
         // can't deliver at this moment
         // add message to the delivery buffer associated with causal delivery protocol
         pthread_mutex_lock(&delv_buf_lock);
@@ -639,16 +622,12 @@ void Process::add_to_delv_buf(string msg, MsgObjType type, int source_pid, int d
     }
 }
 
-// takes a message's VC and it's source pid
+// takes a message's VC and its source pid
 // returns true if the message can be delivered
 // otherwise returns false
 bool Process::can_deliver(std::vector<int> &vc_msg, int source_pid)
 {
     bool ans = true;
-
-    cout << PID << "CAN DELIVER" << endl;
-    PR(cd[source_pid])
-    PR(vc_msg[source_pid])
 
     pthread_mutex_lock(&cd_lock);
     if (cd[source_pid] != vc_msg[source_pid] - 1)
@@ -660,9 +639,6 @@ bool Process::can_deliver(std::vector<int> &vc_msg, int source_pid)
         {
             if (k == source_pid)
                 continue;
-            PR(k)
-            PR(cd[k])
-            PR(vc_msg[k])
             if (cd[k] < vc_msg[k])
             {
                 ans = false;
@@ -681,7 +657,7 @@ bool Process::can_deliver(std::vector<int> &vc_msg, int source_pid)
 // updates VC
 void Process::deliver(MsgObj& M)
 {
-    cout << PID << "DELIVER:" << M.msg << endl;
+    cout << "pid=" << PID << " DELIVER-" << M.msg << endl;
     M.delv_time = time(NULL) - start_time;
 
     // add deliver event to log buffer
@@ -725,6 +701,8 @@ void Process::causal_delv_handler()
 
 }
 
+// constructs a MsgObj
+// adds it to the log_buf
 void Process::msg_handler(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time)
 {
     MsgObj M(msg, type, source_pid, dest_pid, send_time, recv_time, delv_time);
@@ -754,32 +732,7 @@ void Process::msg_handler(string msg, MsgObjType type, int source_pid, int dest_
 
 }
 
-// void Process::log_br(string msg, int pid, time_t t)
-// {
-//     ofstream fout;
-//     stringstream ss;
-//     ss << pid;
-//     string logfile = LOG_FILE + ss.str() + ".txt";
-
-//     fout.open(logfile.c_str(), ios::app);
-//     fout << t << "\t";
-//     fout << "p" << pid << " BRC " << msg << endl;
-//     fout.close();
-// }
-
-// void Process::log_rcv(string msg, int pid, time_t t)
-// {
-//     ofstream fout;
-//     stringstream ss;
-//     ss << pid;
-//     string logfile = LOG_FILE + ss.str() + ".txt";
-
-//     fout.open(logfile.c_str(), ios::app);
-//     fout << t << "\t";
-//     fout << "p" << pid << " REC " << msg << endl;
-//     fout.close();
-// }
-
+// write event info to logfile
 void write_to_log(string msg, int pid, time_t t, MsgObjType type)
 {
     ofstream fout;
@@ -801,8 +754,8 @@ void write_to_log(string msg, int pid, time_t t, MsgObjType type)
     fout.close();
 }
 
-// in addition to logging, logger also acts as delay simulator
-// to artificially delay receipt of messages
+// thread to poll log buffer periodically
+// and write events to logfile according to their timestamp
 void* logger(void* _P)
 {
     Process *P = (Process *)_P;
@@ -833,7 +786,6 @@ void* logger(void* _P)
                     if (it->type == DELIVER)
                     {
                         pid = it->dest_pid;
-                        cout << "LOGGER: deliver case" << endl;
                     }
                     write_to_log(it->msg, pid, mit->first, it->type);
 
@@ -954,32 +906,32 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
-
     pthread_t server_thread;
     int rv = pthread_create(&server_thread, NULL, server, (void *)P);
 
     if (rv)
     {
-        cout << "Error:unable to create thread for server:" << rv << endl;
+        cout << "ERROR:unable to create thread for server:" << rv << endl;
         return 1;
     }
 
-    cout << "Sleeping for 3 secs" << endl;
+    cout << "pid=" << PID << " SLEEPING for 3 secs..." << endl;
     usleep(3000 * 1000);
-    cout << "Up and running once again" << endl;
+    cout << "pid=" << PID << " Up and running once again..." << endl;
 
-    void *status;
 
     P->initiate_connections();
+
+    cout << "pid=" << PID << " SLEEPING for 5 secs to ensure all connections are established..." << endl;
     usleep(5000 * 1000);
-    P->print();
+    cout << "pid=" << PID << " Up and running once again..." << endl;
 
     pthread_t broadcast_thread;
     rv = pthread_create(&broadcast_thread, NULL, start_broadcast, (void *)P);
 
     if (rv)
     {
-        cout << "Error:unable to create thread for broadcast:" << rv << endl;
+        cout << "ERROR:unable to create thread for broadcast:" << rv << endl;
         return 1;
     }
 
@@ -998,7 +950,7 @@ int main(int argc, char const *argv[])
 
         if (rv)
         {
-            cout << "Error:unable to create thread for receive for " << i << ":" << rv << endl;
+            cout << "ERROR:unable to create thread for receive for " << i << ":" << rv << endl;
             return 1;
         }
     }
@@ -1008,7 +960,7 @@ int main(int argc, char const *argv[])
 
     if (rv)
     {
-        cout << "Error:unable to create thread for logging" << endl;
+        cout << "ERROR:unable to create thread for logging" << endl;
         return 1;
     }
 
@@ -1017,15 +969,18 @@ int main(int argc, char const *argv[])
 
     if (rv)
     {
-        cout << "Error:unable to create thread for logging" << endl;
+        cout << "ERROR:unable to create thread for logging" << endl;
         return 1;
     }
+
+    void *status;
+    pthread_join(broadcast_thread, &status);
 
     for (int i = 0; i < N; ++i)
     {
         pthread_join(receive_thread[i], &status);
     }
-    pthread_join(broadcast_thread, &status);
+
     pthread_join(recv_buf_thread, &status);
     pthread_join(logger_thread, &status);
     pthread_join(server_thread, &status);

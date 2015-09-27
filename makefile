@@ -16,4 +16,4 @@ process4: process.cpp process.h
 	g++ -o process4 -pthread process.cpp
 
 clean:
-	rm -f *.o process0 process1 process2 process3 process4
+	rm -f *.o *.txt process0 process1 process2 process3 process4

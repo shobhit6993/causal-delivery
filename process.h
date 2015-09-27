@@ -34,7 +34,7 @@ using namespace std;
 
 #define PR(x) cout << #x " = " << x << "\n";
 #define N 5
-#define CONFIG_FILE "config.txt"
+#define CONFIG_FILE "config"
 
 #define LISTEN_PORT0 "10666"  // the port on which p0 listens for incoming connections
 #define LISTEN_PORT1 "11666"  // the port on which p1 listens for incoming connections
@@ -53,14 +53,6 @@ using namespace std;
 #define LOG_FILE "log"
 
 extern int PID;
-
-void sigchld_handler(int s);
-void* start_broadcast(void*);
-void* server(void*);
-void* receive(void* _P);
-void* logger(void* _P);
-void* recv_buf_poller(void* _P);
-
 
 typedef enum
 {
@@ -114,7 +106,7 @@ public:
     time_t get_delay(int _pid);
 
 
-    int return_in_addr(struct sockaddr * sa);
+    int return_port_no(struct sockaddr * sa);
     void read_config(string filename = CONFIG_FILE);
     void initiate_connections();
     int client(int);
@@ -135,16 +127,6 @@ public:
     void deliver(MsgObj& M);
     void causal_delv_handler();
 
-
-
-
-
-
-
-    void log_br(string msg, int pid, time_t t);
-    void log_rcv(string msg, int pid, time_t t);
-
-
 };
 
 struct Arg
@@ -152,6 +134,16 @@ struct Arg
     Process * P;
     int pid;
 };
+
+void sigchld_handler(int s);
+void* start_broadcast(void*);
+void* server(void*);
+void* receive(void* _P);
+void* logger(void* _P);
+void self_send(const char buf[MAXDATASIZE], int pid, Process* P);
+void write_to_log(string msg, int pid, time_t t, MsgObjType type);
+void* recv_buf_poller(void* _P);
+void usage();
 
 // msg are of the following format (without quotes)
 // "P5:21 12 1 0 100 5"
