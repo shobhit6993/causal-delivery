@@ -668,7 +668,6 @@ void Process::deliver(MsgObj& M)
 // and checks which messages can be delivered now
 void Process::causal_delv_handler()
 {
-    pthread_mutex_lock(&delv_buf_lock);
 
     std::list<MsgObj>::iterator it = delv_buf.begin();
     while (it != delv_buf.end())
@@ -678,7 +677,10 @@ void Process::causal_delv_handler()
             deliver(*it);
 
             // remove this message from the deliver buffer
+            pthread_mutex_lock(&delv_buf_lock);
             delv_buf.erase(it);
+            pthread_mutex_lock(&delv_buf_lock);
+            cout << "CDH" << endl;
 
             // need to start from the beginning of the list
             // because delivery of this message render some prev message deliverable
@@ -690,7 +692,6 @@ void Process::causal_delv_handler()
         }
     }
 
-    pthread_mutex_lock(&delv_buf_lock);
 }
 
 void Process::msg_handler(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time)
