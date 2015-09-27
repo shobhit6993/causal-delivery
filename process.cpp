@@ -13,20 +13,20 @@ Process::Process(): vc(N, 0), cd(N, 0), delay(N, 0), fd(N, -1), send_port_no(N),
     port_pid_map.insert(make_pair(atoi(SEND_PORT0), 0));
     port_pid_map.insert(make_pair(atoi(SEND_PORT1), 1));
     port_pid_map.insert(make_pair(atoi(SEND_PORT2), 2));
-    // port_pid_map.insert(make_pair(atoi(SEND_PORT3), 3));
-    // port_pid_map.insert(make_pair(atoi(SEND_PORT4), 4));
+    port_pid_map.insert(make_pair(atoi(SEND_PORT3), 3));
+    port_pid_map.insert(make_pair(atoi(SEND_PORT4), 4));
 
     send_port_no[0] = SEND_PORT0;
     send_port_no[1] = SEND_PORT1;
     send_port_no[2] = SEND_PORT2;
-    // send_port_no[3] = SEND_PORT3;
-    // send_port_no[4] = SEND_PORT4;
+    send_port_no[3] = SEND_PORT3;
+    send_port_no[4] = SEND_PORT4;
 
     listen_port_no[0] = LISTEN_PORT0;
     listen_port_no[1] = LISTEN_PORT1;
     listen_port_no[2] = LISTEN_PORT2;
-    // listen_port_no[3] = LISTEN_PORT3;
-    // listen_port_no[4] = LISTEN_PORT4;
+    listen_port_no[3] = LISTEN_PORT3;
+    listen_port_no[4] = LISTEN_PORT4;
 }
 
 // get port number
@@ -481,7 +481,7 @@ void* start_broadcast(void* _P)
                     self_send(msg.c_str(), PID, P);
                     continue;
                 }
-                cout << PID << "#" << "P" << j << P->get_fd(j) << endl;
+                // cout << PID << "#" << "P" << j << P->get_fd(j) << endl;
                 if (send(P->get_fd(j), msg.c_str(), msg.size(), 0) == -1)
                 {
                     cerr << "error sending to process P" << j << endl;
@@ -549,7 +549,7 @@ void* receive(void* argument)
     while (true)
     {
         char buf[MAXDATASIZE];
-        cout << PID << "#" << "Stuck at" << pid << "looking at " << P->get_fd(pid) << endl;
+        // cout << PID << "#" << "Stuck at" << pid << "looking at " << P->get_fd(pid) << endl;
         // memset(buf, '\0', MAXDATASIZE);
         if ((numbytes = recv(P->get_fd(pid), buf, MAXDATASIZE - 1, 0)) == -1)
         {
@@ -630,7 +630,7 @@ void Process::add_to_delv_buf(string msg, MsgObjType type, int source_pid, int d
     }
     else
     {
-        cout << "DELV BUF:" << M.msg << "pushed in" << endl;
+        cout << PID << "DELV BUF:" << M.msg << "pushed in" << endl;
         // can't deliver at this moment
         // add message to the delivery buffer associated with causal delivery protocol
         pthread_mutex_lock(&delv_buf_lock);
@@ -646,7 +646,7 @@ bool Process::can_deliver(std::vector<int> &vc_msg, int source_pid)
 {
     bool ans = true;
 
-    cout << "CAN DELIVER" << PID << endl;
+    cout << PID << "CAN DELIVER" << endl;
     PR(cd[source_pid])
     PR(vc_msg[source_pid])
 
@@ -681,7 +681,7 @@ bool Process::can_deliver(std::vector<int> &vc_msg, int source_pid)
 // updates VC
 void Process::deliver(MsgObj& M)
 {
-    cout << "DELIVER:" << M.msg << endl;
+    cout << PID << "DELIVER:" << M.msg << endl;
     M.delv_time = time(NULL) - start_time;
 
     // add deliver event to log buffer
@@ -711,8 +711,7 @@ void Process::causal_delv_handler()
             // remove this message from the deliver buffer
             pthread_mutex_lock(&delv_buf_lock);
             delv_buf.erase(it);
-            pthread_mutex_lock(&delv_buf_lock);
-            cout << "CDH" << endl;
+            pthread_mutex_unlock(&delv_buf_lock);
 
             // need to start from the beginning of the list
             // because delivery of this message render some prev message deliverable
@@ -809,7 +808,7 @@ void* logger(void* _P)
     Process *P = (Process *)_P;
     while (true)
     {
-        cout << PID << "LOGGER:size" << P->log_buf.size() << endl;
+        // cout << PID << "LOGGER:size" << P->log_buf.size() << endl;
         pthread_mutex_lock(&log_buf_lock);
 
         if (!((P->log_buf).empty()))
@@ -844,7 +843,7 @@ void* logger(void* _P)
             }
         }
         pthread_mutex_unlock(&log_buf_lock);
-        usleep(500 * 1000);
+        usleep(100 * 1000);
     }
     pthread_exit(NULL);
 }
@@ -854,7 +853,7 @@ void* recv_buf_poller(void* _P)
     Process *P = (Process *)_P;
     while (true)
     {
-        cout << PID << "RECV_BUF:size" << P->recv_buf.size() << endl;
+        // cout << PID << "RECV_BUF:size" << P->recv_buf.size() << endl;
         pthread_mutex_lock(&recv_buf_lock);
 
         if (!((P->recv_buf).empty()))
@@ -882,7 +881,7 @@ void* recv_buf_poller(void* _P)
             }
         }
         pthread_mutex_unlock(&recv_buf_lock);
-        usleep(500 * 1000);
+        usleep(100 * 1000);
     }
     pthread_exit(NULL);
 }

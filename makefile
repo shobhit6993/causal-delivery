@@ -1,4 +1,4 @@
-all: process0 process1 process2
+all: process0 process1 process2 process3 process4
 
 process0: process.cpp process.h
 	g++ -o process0 -pthread process.cpp
@@ -9,11 +9,11 @@ process1: process.cpp process.h
 process2: process.cpp process.h
 	g++ -o process2 -pthread process.cpp
 
-# client: client.cpp process.h
-# 	g++ -o client -pthread client.cpp
+process3: process.cpp process.h
+	g++ -o process3 -pthread process.cpp
 
-# test: test.cpp process.h
-# 	g++ -o test -pthread test.cpp
+process4: process.cpp process.h
+	g++ -o process4 -pthread process.cpp
 
-# 4: 4.cpp process.h
-# 	g++ -o 4 -pthread 4.cpp
+clean:
+	rm -f *.o process0 process1 process2 process3 process4

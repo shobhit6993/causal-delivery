@@ -33,9 +33,8 @@
 using namespace std;
 
 #define PR(x) cout << #x " = " << x << "\n";
-#define N 3
+#define N 5
 #define CONFIG_FILE "config.txt"
-const string ST_BR_MSG = "ST_BR";
 
 #define LISTEN_PORT0 "10666"  // the port on which p0 listens for incoming connections
 #define LISTEN_PORT1 "11666"  // the port on which p1 listens for incoming connections
