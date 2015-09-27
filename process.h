@@ -53,6 +53,8 @@ const string ST_BR_MSG = "ST_BR";
 #define BACKLOG 10   // how many pending connections queue will hold
 #define LOG_FILE "log"
 
+extern int PID;
+
 void sigchld_handler(int s);
 void* start_broadcast(void*);
 void* server(void*);

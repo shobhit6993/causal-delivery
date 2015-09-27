@@ -1,5 +1,6 @@
 #include "process.h"
-#define PID 0
+int PID;
+
 pthread_mutex_t fd_lock;
 pthread_mutex_t log_buf_lock;
 pthread_mutex_t vc_lock;
@@ -896,8 +897,25 @@ void sigchld_handler(int s)
     errno = saved_errno;
 }
 
+void usage()
+{
+    cout << "Bad command line arguments" << endl;
+    cout << "USAGE: ./process processID" << endl;
+    cout << "EXAMPLE USAGE: ./process 10" << endl;
+}
+
 int main(int argc, char const *argv[])
 {
+    if (argc != 2)
+    {
+        return 1;
+    }
+    else
+    {
+        int pid = atoi(argv[1]);
+        PID = pid;
+    }
+
     Process *P = new Process;
     P->read_config(CONFIG_FILE);
 
@@ -976,12 +994,6 @@ int main(int argc, char const *argv[])
     }
     for (int i = 0; i < N; ++i)
     {
-
-        // if (i == PID)
-        // {
-        //     // cout << "Not creating thread for receving from self..." << endl;
-        //     continue;
-        // }
         A[i]->pid = i;
         rv = pthread_create(&receive_thread[i], NULL, receive, (void *)A[i]);
 
