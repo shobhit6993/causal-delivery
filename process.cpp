@@ -749,8 +749,14 @@ void Process::msg_handler(string msg, MsgObjType type, int source_pid, int dest_
 }
 
 // write event info to logfile
-void write_to_log(string msg, int pid, time_t t, MsgObjType type)
+void write_to_log(string msg, int s_pid, int d_pid, time_t t, MsgObjType type)
 {
+    int pid;
+    if (type == SEND)
+        pid = s_pid;
+    else
+        pid = d_pid;
+
     ofstream fout;
     stringstream ss;
     ss << pid;
@@ -766,7 +772,7 @@ void write_to_log(string msg, int pid, time_t t, MsgObjType type)
     fout << t << "\t";
     if (type == SEND)
     {
-        fout << "p" << pid << "->p" << PID << " " << msg << endl;
+        fout << "p" << PID << "->p" << d_pid << " " << msg << endl;
     }
     else
     {
@@ -782,7 +788,8 @@ void* logger(void* _P)
     Process *P = (Process *)_P;
     while (true)
     {
-        // cout << PID << "LOGGER:size" << P->log_buf.size() << endl;
+        // cout << "pid=" << PID << "LOGGER:size" << P->log_buf.size() << endl;
+        std::vector<L> log_it;
         pthread_mutex_lock(&log_buf_lock);
 
         if (!((P->log_buf).empty()))
@@ -796,26 +803,19 @@ void* logger(void* _P)
                 vector<MsgObj>::iterator it = (mit->second).begin();    //iterating over msgobjs
                 while (it != (mit->second).end())
                 {
-                    if (it->type == SEND)
-                    {
-                        pid = it->source_pid;
-                    }
-                    if (it->type == RECEIVE)
-                    {
-                        pid = it->dest_pid;
-                    }
-                    if (it->type == DELIVER)
-                    {
-                        pid = it->dest_pid;
-                    }
-                    write_to_log(it->msg, pid, mit->first, it->type);
-
+                    log_it.push_back(L(it->msg, it->source_pid, it->dest_pid, mit->first, it->type));
+                    // write_to_log(it->msg, pid, mit->first, it->type);
                     it++;
                 }
                 (P->log_buf).erase((P->log_buf).begin());
             }
         }
         pthread_mutex_unlock(&log_buf_lock);
+
+        for (int i = 0; i < log_it.size(); ++i)
+        {
+            write_to_log(log_it[i].msg, log_it[i].s_pid, log_it[i].d_pid , log_it[i].t, log_it[i].type);
+        }
         usleep(100 * 1000);
     }
     pthread_exit(NULL);
@@ -890,7 +890,7 @@ int main(int argc, char const *argv[])
 
     Process *P = new Process;
     P->read_config(CONFIG_FILE);
-    P->print();
+
     if (pthread_mutex_init(&fd_lock, NULL) != 0)
     {
         printf("\n mutex init failed\n");
@@ -976,8 +976,8 @@ int main(int argc, char const *argv[])
         }
     }
 
-    pthread_t logger_thread;
-    rv = pthread_create(&logger_thread, NULL, logger, (void *)P);
+    pthread_t recv_buf_thread;
+    rv = pthread_create(&recv_buf_thread, NULL, recv_buf_poller, (void *)P);
 
     if (rv)
     {
@@ -985,8 +985,8 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
-    pthread_t recv_buf_thread;
-    rv = pthread_create(&recv_buf_thread, NULL, recv_buf_poller, (void *)P);
+    pthread_t logger_thread;
+    rv = pthread_create(&logger_thread, NULL, logger, (void *)P);
 
     if (rv)
     {

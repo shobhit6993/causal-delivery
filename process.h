@@ -145,13 +145,24 @@ struct Arg
     int pid;
 };
 
+struct L
+{
+    string msg;
+    int s_pid;
+    int d_pid;
+    time_t t;
+    MsgObjType type;
+
+    L(string msg, int s_pid, int d_pid, time_t t, MsgObjType type): msg(msg), s_pid(s_pid), d_pid(d_pid), t(t), type(type) {};
+};
+
 void sigchld_handler(int s);
 void* start_unicast(void*);
 void* server(void*);
 void* receive(void* _P);
 void* logger(void* _P);
 void self_send(const char buf[MAXDATASIZE], int pid, Process* P);
-void write_to_log(string msg, int pid, time_t t, MsgObjType type);
+void write_to_log(string msg, int s_pid, int d_pid, time_t t, MsgObjType type);
 void* recv_buf_poller(void* _P);
 void usage();
 
