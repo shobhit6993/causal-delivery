@@ -94,7 +94,7 @@ private:
 
 
 public:
-    std::map<time_t, std::vector<MsgObj> > msg_buf;
+    std::map<time_t, std::vector<MsgObj> > log_buf;
     time_t start_time;
 
     Process();

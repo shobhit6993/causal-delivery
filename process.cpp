@@ -1,7 +1,7 @@
 #include "process.h"
 #define PID 0
 pthread_mutex_t fd_lock;
-pthread_mutex_t msg_buf_lock;
+pthread_mutex_t log_buf_lock;
 pthread_mutex_t vc_lock;
 pthread_mutex_t cd_lock;
 pthread_mutex_t delv_buf_lock;
@@ -442,7 +442,9 @@ void self_send(const char buf[MAXDATASIZE], int pid, Process* P)
 
     // add receive event to msg log buf
     P->msg_handler(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1);
-    P->vc_update_recv(vc_msg, PID); // update VC on receive event
+    // no need to update VC on receive at this moment.
+    // VC will be updated on delivery, because for VC, recv means actually delivered
+    // P->vc_update_recv(vc_msg, PID); // update VC on receive event
 
     // check if this message can be delivered immediately
     // if yes, then deliver, add deliver event to msg log buffer
@@ -571,7 +573,9 @@ void* receive(void* argument)
 
             // add receive event to msg log buf
             P->msg_handler(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1);
-            P->vc_update_recv(vc_msg, PID); // update VC on receive event
+            // no need to update VC on receive at this moment.
+            // VC will be updated on delivery, because for VC, recv means actually delivered
+            // P->vc_update_recv(vc_msg, PID); // update VC on receive event
 
             // check if this message can be delivered immediately
             // if yes, then deliver, add deliver event to msg log buffer
@@ -650,6 +654,7 @@ bool Process::can_deliver(std::vector<int> &vc_msg, int source_pid)
 // deliver message M
 // adds deliver event to log buffer
 // updates cd
+// updates VC
 void Process::deliver(MsgObj& M)
 {
     cout << "DELIVER:" << M.msg << endl;
@@ -662,6 +667,9 @@ void Process::deliver(MsgObj& M)
     pthread_mutex_lock(&cd_lock);
     cd[M.source_pid] = M.vc[M.source_pid];
     pthread_mutex_unlock(&cd_lock);
+
+    vc_update_recv(M.vc, PID); // update VC on deliver event (equiv to receive of VC protocol)
+
 }
 
 // iterates over all messages in delivery buffer
@@ -706,20 +714,20 @@ void Process::msg_handler(string msg, MsgObjType type, int source_pid, int dest_
     if (type == DELIVER)
         indexing_time = delv_time;
 
-    pthread_mutex_lock(&msg_buf_lock);
+    pthread_mutex_lock(&log_buf_lock);
 
-    if (msg_buf.find(indexing_time) != msg_buf.end()) // MsgObj already exists with this timestamp
+    if (log_buf.find(indexing_time) != log_buf.end()) // MsgObj already exists with this timestamp
     {
-        msg_buf[indexing_time].push_back(M);
+        log_buf[indexing_time].push_back(M);
     }
     else
     {
         std::vector<MsgObj> v;
         v.push_back(M);
-        msg_buf.insert(make_pair(indexing_time, v));
+        log_buf.insert(make_pair(indexing_time, v));
     }
 
-    pthread_mutex_unlock(&msg_buf_lock);
+    pthread_mutex_unlock(&log_buf_lock);
 
 }
 
@@ -775,12 +783,12 @@ void* logger(void* _P)
     Process *P = (Process *)_P;
     while (true)
     {
-        cout << PID << "LOGGER:size" << P->msg_buf.size() << endl;
-        pthread_mutex_lock(&msg_buf_lock);
+        cout << PID << "LOGGER:size" << P->log_buf.size() << endl;
+        pthread_mutex_lock(&log_buf_lock);
 
-        if (!((P->msg_buf).empty()))
+        if (!((P->log_buf).empty()))
         {
-            std::map<time_t, vector<MsgObj> >::iterator mit = (P->msg_buf).begin();
+            std::map<time_t, vector<MsgObj> >::iterator mit = (P->log_buf).begin();
 
             if ((mit->first) == time(NULL) - (P->start_time))
             {
@@ -806,10 +814,10 @@ void* logger(void* _P)
 
                     it++;
                 }
-                (P->msg_buf).erase((P->msg_buf).begin());
+                (P->log_buf).erase((P->log_buf).begin());
             }
         }
-        pthread_mutex_unlock(&msg_buf_lock);
+        pthread_mutex_unlock(&log_buf_lock);
         usleep(500 * 1000);
     }
     pthread_exit(NULL);
@@ -836,7 +844,7 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
-    if (pthread_mutex_init(&msg_buf_lock, NULL) != 0)
+    if (pthread_mutex_init(&log_buf_lock, NULL) != 0)
     {
         printf("\n mutex init failed\n");
         return 1;
