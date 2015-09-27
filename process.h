@@ -62,7 +62,7 @@ typedef enum
 struct MsgObj
 {
     string msg;
-    std::vector<int> vc;
+    std::vector<std::vector<int> > sent_trace;
     int source_pid;
     int dest_pid;
     time_t send_time;
@@ -71,20 +71,29 @@ struct MsgObj
 
     MsgObjType type;
 
-    MsgObj(string msg, MsgObjType type, int source_pid = -1, int dest_pid = -1, time_t send_time = -1, time_t recv_time = -1, time_t delv_time = -1, std::vector<int> vc = std::vector<int> (N, -1)) : msg(msg), type(type), source_pid(source_pid), dest_pid(dest_pid), send_time(send_time), recv_time(recv_time), delv_time(delv_time), vc(vc) {};
+    MsgObj( string msg, 
+            MsgObjType type, 
+            int source_pid = -1, 
+            int dest_pid = -1, 
+            time_t send_time = -1, 
+            time_t recv_time = -1, 
+            time_t delv_time = -1, 
+            std::vector<std::vector<int> > sent_trace = std::vector<std::vector<int> > (N, std::vector<int> (N, -1)))
+            : msg(msg), type(type), source_pid(source_pid), dest_pid(dest_pid), send_time(send_time), 
+                recv_time(recv_time), delv_time(delv_time), sent_trace(sent_trace) {};
 };
 
 class Process
 {
 private:
     std::vector<time_t> delay;
-    std::vector<time_t> br_time;
+    std::vector<std::vector<time_t> > unicast_time;
     std::vector<int> fd;
     std::vector<string> listen_port_no;
     std::vector<string> send_port_no;
     std::map<int, int> port_pid_map;
-    std::vector<int> vc;
-    std::vector<int> cd;
+    std::vector<int> recv_trace;
+    std::vector<std::vector<int> > sent_trace;
     std::list<MsgObj> delv_buf;
 
 
@@ -98,9 +107,9 @@ public:
     void set_fd_by_pid(int _pid, int new_fd);
 
     string get_listen_port_no(int _pid);
-    time_t get_br_time(int);
+    time_t get_unicast_time(int i, int j);
     int get_fd(int _pid);
-    int get_br_time_size();
+    int get_unicast_size(int i);
     int get_port_pid_map(int port);
     string get_send_port_no(int _pid);
     time_t get_delay(int _pid);
@@ -113,17 +122,18 @@ public:
     void print();
 
     void msg_handler(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time);
-    void extract_vc(string msg, string &body, std::vector<int> &vc_msg);
+    void extract_sent_trace(string msg, string &body, std::vector<std::vector<int> > &sent_trace_msg);
     string construct_msg(int _pid, int msg_counter, string &msg_body);
 
 
-    void vc_update_send(int _pid);
-    void vc_update_recv(std::vector<int> &vc_msg, int _pid);
-    void delay_receipt(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<int> &vc_msg);
+    void sent_trace_update_send(int s_pid, int r_pid);
+    void sent_trace_update_recv(std::vector<std::vector<int> > &sent_trace_msg);
+    void delay_receipt(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<std::vector<int> > &sent_trace_msg);
 
 
-    void add_to_delv_buf(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<int> &vc_msg);
-    bool can_deliver(std::vector<int> &vc_msg, int source_pid);
+    void add_to_delv_buf(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<std::vector<int> > &sent_trace_msg);
+    bool can_deliver(std::vector<std::vector<int> > &sent_trace_msg, int source_pid);
+
     void deliver(MsgObj& M);
     void causal_delv_handler();
 
@@ -136,7 +146,7 @@ struct Arg
 };
 
 void sigchld_handler(int s);
-void* start_broadcast(void*);
+void* start_unicast(void*);
 void* server(void*);
 void* receive(void* _P);
 void* logger(void* _P);
@@ -146,7 +156,7 @@ void* recv_buf_poller(void* _P);
 void usage();
 
 // msg are of the following format (without quotes)
-// "P5:21 12 1 0 100 5"
-// message body, followed by a space, followed by VC of the send event of the message.
+// "P0:21 10 12 1 0"
+// message body, followed by a space, followed by sent_trace of the send event of the message serialized
 // message body format -- 'P' followed by processID followed by ':' followed by message index (local to each process)
-// VC is a space separated list of whole numbers
+// sent_trace is a space separated list of whole numbers (row0 row1), where each row is space separated list of elems

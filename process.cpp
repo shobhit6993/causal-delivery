@@ -3,12 +3,12 @@ int PID;
 
 pthread_mutex_t fd_lock;
 pthread_mutex_t log_buf_lock;
-pthread_mutex_t vc_lock;
-pthread_mutex_t cd_lock;
+pthread_mutex_t sent_trace_lock;
+pthread_mutex_t recv_trace_lock;
 pthread_mutex_t delv_buf_lock;
 pthread_mutex_t recv_buf_lock;
 
-Process::Process(): vc(N, 0), cd(N, 0), delay(N, 0), fd(N, -1), send_port_no(N), listen_port_no(N)
+Process::Process(): sent_trace(N, std::vector<int> (N, 0)), recv_trace(N, 0), delay(N, 0), fd(N, -1), send_port_no(N), listen_port_no(N), unicast_time(N, std::vector<time_t>())
 {
     port_pid_map.insert(make_pair(atoi(SEND_PORT0), 0));
     port_pid_map.insert(make_pair(atoi(SEND_PORT1), 1));
@@ -73,9 +73,9 @@ void Process::set_fd_by_pid(int _pid, int new_fd)
     pthread_mutex_unlock(&fd_lock);
 }
 
-time_t Process::get_br_time(int i)
+time_t Process::get_unicast_time(int i, int j)
 {
-    return br_time[i];
+    return unicast_time[i][j];
 }
 
 int Process::get_fd(int _pid)
@@ -87,9 +87,9 @@ int Process::get_fd(int _pid)
     return ret;
 }
 
-int Process::get_br_time_size()
+int Process::get_unicast_size(int i)
 {
-    return br_time.size();
+    return unicast_time[i].size();
 }
 
 time_t Process::get_delay(int _pid)
@@ -98,7 +98,7 @@ time_t Process::get_delay(int _pid)
 }
 
 // reads config file
-// fills delay and br_time vectors
+// fills delay and unicast_time vectors
 void Process::read_config(string filename)
 {
     ifstream fin;
@@ -128,30 +128,31 @@ void Process::read_config(string filename)
                 delay[i] = m[PID][i];
         }
 
-        i = 0;
-        int p, t;
-        string garbage, line;
-
-        while (i < N && !fin.eof())
+        int p, source, dest, t;
+        string line;
+        while (!fin.eof())
         {
-            fin >> p;
-            fin >> garbage >> garbage;
             std::getline(fin, line);
 
-            if (p == PID)
+            std::istringstream iss(line);
+
+            iss >> source;
+            iss >> dest;
+            if (source == PID)
             {
-                std::istringstream iss(line);
                 while (iss >> t)
                 {
-                    br_time.push_back(t);
+                    unicast_time[dest].push_back(t);
                 }
-                break;
             }
 
-            i++;
         }
 
-        sort(br_time.begin(), br_time.end());
+        for (int i = 0; i < N; ++i)
+        {
+            if (!unicast_time[i].empty())
+                sort(unicast_time[i].begin(), unicast_time[i].end());
+        }
 
     }
     catch (ifstream::failure e)
@@ -380,9 +381,14 @@ void Process::print()
         cout << delay[i] << " ";
     }
     cout << endl;
-    for (int i = 0; i < br_time.size(); ++i)
+    for (int i = 0; i < N; ++i)
     {
-        cout << br_time[i] << " ";
+        cout << PID << "->" << i << " ";
+        for (int j = 0; j < unicast_time[i].size(); ++j)
+        {
+            cout << unicast_time[i][j] << " ";
+        }
+        cout << endl;
     }
 }
 
@@ -397,12 +403,12 @@ void Process::initiate_connections()
 }
 
 // constructs msg
-// appends VC of parent process to the msg body
+// appends sent_trace of parent process to the msg body
 // msg are of the following format (without quotes)
-// "P5:21 12 1 0 100 5"
-// message body, followed by a space, followed by VC of the send event of the message.
+// "P0:21 10 12 1 0"
+// message body, followed by a space, followed by sent_trace of the send event of the message serialized
 // message body format -- 'P' followed by processID followed by ':' followed by message index (local to each process)
-// VC is a space separated list of whole numbers
+// sent_trace is a space separated list of whole numbers (row0 row1), where each row is space separated list of elems
 string Process::construct_msg(int _pid, int msg_counter, string &msg_body)
 {
     stringstream ss;
@@ -416,9 +422,12 @@ string Process::construct_msg(int _pid, int msg_counter, string &msg_body)
 
     for (int i = 0; i < N; ++i)
     {
-        ss.str("");
-        ss << vc[i];
-        msg = msg + " " + ss.str();
+        for (int j = 0; j < N; ++j)
+        {
+            ss.str("");
+            ss << sent_trace[i][j];
+            msg = msg + " " + ss.str();
+        }
     }
 
     return msg;
@@ -427,102 +436,109 @@ string Process::construct_msg(int _pid, int msg_counter, string &msg_body)
 // send message to self
 void self_send(const char buf[MAXDATASIZE], int pid, Process* P)
 {
-    cout << "pid=" << PID << " Msg PSUEDO-RECV from P" << pid << "-" << buf << endl;
+    cout << "pid=" << PID << " Msg PSEUDO-RECV from P" << pid << "-" << buf <<  endl;
 
     int rcv_after_delay = time(NULL) - (P->start_time) + P->get_delay(pid);
     string msg_body;
-    std::vector<int> vc_msg;
+    std::vector<std::vector<int> > sent_trace_msg(N, std::vector<int> (N));
 
-    P->extract_vc(string(buf), msg_body, vc_msg);   //extract VC stamped with the msg
+    P->extract_sent_trace(string(buf), msg_body, sent_trace_msg);   //extract sent_trace stamped with the msg
 
-    // no need to update VC on receive at this moment.
-    // VC will be updated on delivery, because for VC, recv means actually delivered
+    // no need to update recv_trace on receive at this moment.
+    // recv_trace will be updated on delivery
     // P->vc_update_recv(vc_msg, PID); // update VC on receive event
 
-    P->delay_receipt(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1, vc_msg);
+    P->delay_receipt(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1, sent_trace_msg);
 }
 
-// thread to broadcast messages according to br_time vector
-void* start_broadcast(void* _P)
+// thread to unicast messages according to unicast_time vector
+void* start_unicast(void* _P)
 {
     Process *P = (Process *)_P;
 
     P->start_time = time(NULL);
     // cout<<"P"<<PID<<" start_time="<<P->start_time<<endl;
-    int i = 0, msg_counter = 1;
-    int n = P->get_br_time_size();
-    while (i < n)
-    {
-        if ((time(NULL) - (P->start_time)) == (P->get_br_time(i)))
-        {
-            // update vc before send so that updated vc can be timestamped with sent msg
-            // this is not the ideal way, but we assume that all sends are perfect
-            // if send command below fails, we exit anyway.
-            P->vc_update_send(PID);
-            string msg_body;
-            string msg = P->construct_msg(PID, msg_counter, msg_body);
+    int msg_counter = 1;
 
-            for (int j = 0; j < N; ++j)
+    while (true)
+    {
+        for (int r = 0; r < N; ++r)
+        {
+            int n =  P->get_unicast_size(r);
+            for (int j = 0; j < n; ++j)
             {
-                if (j == PID)   //special hack for sending message to self
+                if ((time(NULL) - (P->start_time)) == (P->get_unicast_time(r, j)))
                 {
-                    self_send(msg.c_str(), PID, P);
-                    continue;
-                }
-                if (send(P->get_fd(j), msg.c_str(), msg.size(), 0) == -1)
-                {
-                    cerr << "pid=" << PID << " ERROR sending to process P" << j << endl;
-                    exit(1);
-                }
-                else
-                {
-                    cout << "pid=" << PID << " Sent msg to P" << j << "-" << msg << endl;
+                    P->sent_trace_update_send(PID, r);
+
+                    string msg_body;
+                    string msg = P->construct_msg(PID, msg_counter, msg_body);
+
+                    if (r == PID)   //special hack for sending message to self
+                    {
+                        self_send(msg.c_str(), PID, P);
+                        continue;
+                    }
+                    if (send(P->get_fd(r), msg.c_str(), msg.size(), 0) == -1)
+                    {
+                        cerr << "pid=" << PID << " ERROR sending to process P" << j << endl;
+                        exit(1);
+                    }
+                    else
+                    {
+                        cout << "pid=" << PID << " Sent msg to P" << r << "-" << msg << " at t=" << P->get_unicast_time(r, j) << endl;
+                    }
+
+                    //should ideally use time(NULL)-(P->start_time)
+                    P->msg_handler(msg_body, SEND, PID, r, P->get_unicast_time(r, j), -1, -1);
+                    // P->log_br(msg, PID, P->get_br_time(i));
+                    msg_counter++;
                 }
             }
-            //should ideally use time(NULL)-(P->start_time)
-            P->msg_handler(msg_body, SEND, PID, -1, P->get_br_time(i), -1, -1);
-            // P->log_br(msg, PID, P->get_br_time(i));
-            msg_counter++;
-            i++;
         }
-        usleep(100 * 1000);
+        usleep(1000 * 1000);
     }
-    cout << "pid=" << PID << " Start_broadcast thread exiting..." << endl;
-    // usleep(100000 * 1000);
-
+    cout << "pid=" << PID << " start_unicast thread exiting..." << endl;
     pthread_exit(NULL);
 }
 
-// VC update on send event
-void Process::vc_update_send(int _pid)
+// sent_trace update on send event
+void Process::sent_trace_update_send(int s_pid, int r_pid)
 {
-    pthread_mutex_lock(&vc_lock);
-    vc[_pid]++;
-    pthread_mutex_unlock(&vc_lock);
+    pthread_mutex_lock(&sent_trace_lock);
+    sent_trace[s_pid][r_pid]++;
+    pthread_mutex_unlock(&sent_trace_lock);
 }
 
-// VC update on receive event
-void Process::vc_update_recv(std::vector<int> &vc_msg, int _pid)
+// sent_trace update on receive event
+void Process::sent_trace_update_recv(std::vector<std::vector<int> > &sent_trace_msg)
 {
-    pthread_mutex_lock(&vc_lock);
+    pthread_mutex_lock(&sent_trace_lock);
     for (int i = 0; i < N; ++i)
     {
-        vc[i] = max(vc[i], vc_msg[i]);
+        for (int j = 0; j < N; ++j)
+        {
+            sent_trace[i][j] = max(sent_trace[i][j], sent_trace_msg[i][j]);
+        }
     }
-    // vc[_pid]++;  //don't increment VC on receive event for causal delivery protocol
-    pthread_mutex_unlock(&vc_lock);
+    pthread_mutex_unlock(&sent_trace_lock);
 }
 
-// extracts VC vector and msg body from message
-void Process::extract_vc(string msg, string &body, std::vector<int> &vc_msg)
+// extracts sent_trace vector and msg body from message
+void Process::extract_sent_trace(string msg, string &body, std::vector<std::vector<int> > &sent_trace_msg)
 {
     int n = msg.size();
     istringstream iss(msg);
     iss >> body;
     int temp;
-    while (iss >> temp)
+
+    for (int i = 0; i < N; ++i)
     {
-        vc_msg.push_back(temp);
+        for (int j = 0; j < N; ++j)
+        {
+            iss >> temp;
+            sent_trace_msg[i][j] = temp;
+        }
     }
 }
 
@@ -554,15 +570,15 @@ void* receive(void* argument)
 
             int rcv_after_delay = time(NULL) - (P->start_time) + P->get_delay(pid);
             string msg_body;
-            std::vector<int> vc_msg;
+            std::vector<std::vector<int> > sent_trace_msg(N, std::vector<int> (N));
 
-            P->extract_vc(string(buf), msg_body, vc_msg);   //extract VC stamped with the msg
+            P->extract_sent_trace(string(buf), msg_body, sent_trace_msg);   //extract sent_trace stamped with the msg
 
-            // no need to update VC on receive at this moment.
-            // VC will be updated on delivery, because for VC, recv means actually delivered
+            // no need to update recv_trace on receive at this moment.
+            // recv_trace will be updated on delivery
             // P->vc_update_recv(vc_msg, PID); // update VC on receive event
 
-            P->delay_receipt(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1, vc_msg);
+            P->delay_receipt(msg_body, RECEIVE, pid, PID, -1, rcv_after_delay, -1, sent_trace_msg);
         }
         usleep(100 * 1000);
     }
@@ -572,9 +588,9 @@ void* receive(void* argument)
 
 // constructs MsgObj
 // adds it to recv buffer
-void Process::delay_receipt(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<int> &vc_msg)
+void Process::delay_receipt(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<std::vector<int> > &sent_trace_msg)
 {
-    MsgObj M(msg, type, source_pid, dest_pid, send_time, recv_time, delv_time, vc_msg);
+    MsgObj M(msg, type, source_pid, dest_pid, send_time, recv_time, delv_time, sent_trace_msg);
 
     pthread_mutex_lock(&recv_buf_lock);
 
@@ -596,12 +612,12 @@ void Process::delay_receipt(string msg, MsgObjType type, int source_pid, int des
 // check if this message can be delivered immediately
 // if yes, then deliver, add deliver event to msg log buffer
 // else add msg to the delivery buf associated with causal delivery protocol
-void Process::add_to_delv_buf(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<int> &vc_msg)
+void Process::add_to_delv_buf(string msg, MsgObjType type, int source_pid, int dest_pid, time_t send_time, time_t recv_time, time_t delv_time, std::vector<std::vector<int> > &sent_trace_msg)
 {
-    MsgObj M(msg, type, source_pid, dest_pid, send_time, recv_time, delv_time, vc_msg);
+    MsgObj M(msg, type, source_pid, dest_pid, send_time, recv_time, delv_time, sent_trace_msg);
 
     //check if msg can be delivered
-    if (can_deliver(vc_msg, source_pid))
+    if (can_deliver(sent_trace_msg, source_pid))
     {
         cout << "pid=" << PID << " CAN DELV:" << M.msg << " went right through" << endl;
         deliver(M);
@@ -622,15 +638,15 @@ void Process::add_to_delv_buf(string msg, MsgObjType type, int source_pid, int d
     }
 }
 
-// takes a message's VC and its source pid
+// takes a message's sent_trace and its source pid
 // returns true if the message can be delivered
 // otherwise returns false
-bool Process::can_deliver(std::vector<int> &vc_msg, int source_pid)
+bool Process::can_deliver(std::vector<std::vector<int> > &sent_trace_msg, int source_pid)
 {
     bool ans = true;
 
-    pthread_mutex_lock(&cd_lock);
-    if (cd[source_pid] != vc_msg[source_pid] - 1)
+    pthread_mutex_lock(&recv_trace_lock);
+    if (recv_trace[source_pid] != sent_trace_msg[source_pid][PID] - 1)
         ans = false;
 
     if (ans)
@@ -639,22 +655,22 @@ bool Process::can_deliver(std::vector<int> &vc_msg, int source_pid)
         {
             if (k == source_pid)
                 continue;
-            if (cd[k] < vc_msg[k])
+            if (recv_trace[k] < sent_trace_msg[k][PID])
             {
                 ans = false;
                 break;
             }
         }
     }
-    pthread_mutex_unlock(&cd_lock);
+    pthread_mutex_unlock(&recv_trace_lock);
 
     return ans;
 }
 
 // deliver message M
 // adds deliver event to log buffer
-// updates cd
-// updates VC
+// updates receive trace
+// updates sent trace
 void Process::deliver(MsgObj& M)
 {
     cout << "pid=" << PID << " DELIVER-" << M.msg << endl;
@@ -663,12 +679,12 @@ void Process::deliver(MsgObj& M)
     // add deliver event to log buffer
     msg_handler(M.msg, M.type, M.source_pid, M.dest_pid, M.send_time, M.recv_time, M.delv_time);
 
-    //update cd
-    pthread_mutex_lock(&cd_lock);
-    cd[M.source_pid] = M.vc[M.source_pid];
-    pthread_mutex_unlock(&cd_lock);
+    //update recv trace
+    pthread_mutex_lock(&recv_trace_lock);
+    recv_trace[M.source_pid] = M.sent_trace[M.source_pid][M.dest_pid];
+    pthread_mutex_unlock(&recv_trace_lock);
 
-    vc_update_recv(M.vc, PID); // update VC on deliver event (equiv to receive of VC protocol)
+    sent_trace_update_recv(M.sent_trace); // update VC on deliver event (equiv to receive of VC protocol)
 
 }
 
@@ -680,7 +696,7 @@ void Process::causal_delv_handler()
     std::list<MsgObj>::iterator it = delv_buf.begin();
     while (it != delv_buf.end())
     {
-        if (can_deliver(it->vc, it->source_pid))
+        if (can_deliver(it->sent_trace, it->source_pid))
         {
             deliver(*it);
 
@@ -741,8 +757,6 @@ void write_to_log(string msg, int pid, time_t t, MsgObjType type)
     string logfile = LOG_FILE + ss.str() + ".txt";
 
     string temp;
-    if (type == SEND)
-        temp = " BRC ";
     if (type == RECEIVE)
         temp = " REC ";
     if (type == DELIVER)
@@ -750,7 +764,14 @@ void write_to_log(string msg, int pid, time_t t, MsgObjType type)
 
     fout.open(logfile.c_str(), ios::app);
     fout << t << "\t";
-    fout << "p" << pid << temp << msg << endl;
+    if (type == SEND)
+    {
+        fout << "p" << pid << "->p" << PID << " " << msg << endl;
+    }
+    else
+    {
+        fout << "p" << pid << temp << msg << endl;
+    }
     fout.close();
 }
 
@@ -825,7 +846,7 @@ void* recv_buf_poller(void* _P)
                     // P->vc_update_recv(vc_msg, PID); // update VC on receive event
 
                     P->add_to_delv_buf(it->msg, DELIVER, it->source_pid, it->dest_pid, -1,
-                                       it->recv_time, -1, it->vc);
+                                       it->recv_time, -1, it->sent_trace);
 
                     it++;
                 }
@@ -869,7 +890,7 @@ int main(int argc, char const *argv[])
 
     Process *P = new Process;
     P->read_config(CONFIG_FILE);
-
+    P->print();
     if (pthread_mutex_init(&fd_lock, NULL) != 0)
     {
         printf("\n mutex init failed\n");
@@ -882,13 +903,13 @@ int main(int argc, char const *argv[])
         return 1;
     }
 
-    if (pthread_mutex_init(&vc_lock, NULL) != 0)
+    if (pthread_mutex_init(&sent_trace_lock, NULL) != 0)
     {
         printf("\n mutex init failed\n");
         return 1;
     }
 
-    if (pthread_mutex_init(&cd_lock, NULL) != 0)
+    if (pthread_mutex_init(&recv_trace_lock, NULL) != 0)
     {
         printf("\n mutex init failed\n");
         return 1;
@@ -926,8 +947,8 @@ int main(int argc, char const *argv[])
     usleep(5000 * 1000);
     cout << "pid=" << PID << " Up and running once again..." << endl;
 
-    pthread_t broadcast_thread;
-    rv = pthread_create(&broadcast_thread, NULL, start_broadcast, (void *)P);
+    pthread_t unicast_thread;
+    rv = pthread_create(&unicast_thread, NULL, start_unicast, (void *)P);
 
     if (rv)
     {
@@ -974,7 +995,7 @@ int main(int argc, char const *argv[])
     }
 
     void *status;
-    pthread_join(broadcast_thread, &status);
+    pthread_join(unicast_thread, &status);
 
     for (int i = 0; i < N; ++i)
     {
