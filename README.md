@@ -1,6 +1,9 @@
 Causal broadcast
 ==============
 
+
+```NOTE:``` The master branch of this repository implements causal broadcast. The unicast branch of this repository implements causal unicast
+
 This program executes causal broadcast between a set of N (=5) processes. Causal broadcast respects causal delivery of messages in a system where processes communicate with each other only through broadcasts.
 
 ### Build instructions:
