@@ -31,23 +31,20 @@ Each process generates its own log file, namely, ``log0, log1,...``
 ### Configuration:
 The configurations can be provided in config file. Following is a sample config file
 
->0 0 4 0 0 <br>
+>0 0 3 3 3 <br>
 0 0 0 0 0 <br>
 0 0 0 0 0 <br>
 0 0 0 0 0 <br>
 0 0 0 0 0 <br>
-0 2 1 <br>
-0 1 2 <br>
-1 2 3 <br>
-3 4 1 2
+0 br at 1 <br>
+1 br at 2 3
 
 If there are N processes (N=5 at present), then config file contains a N*N upper triangular matrix of whole numbers. Value in cell (i,j) of the upper triangle represents the delay between process i and process j in seconds. For example, in above case, the delay between 0 and 2 is 4 sec.
 
-This is followed by any number of lines, where each line is a space separated list of whole numbers.
->0 2 1   // It is a triple (sender, reciever, times[]). Process 0 send messages to Process 2 at 1s <br>
-0 1 2   // Process 0 send messages to Process 1 at 2s <br>
-1 2 3   // Process 1 send messages to Process 2 at 3s <br>
-3 4 1 2 // Process 3 send messages to Process 4 at 1s, 2s <br>
+This is followed by at max N number of lines, where each line starts with process ID, followed by " br at " folllwed by a space separated list of whole numbers.
+
+>0 br at 1       // Process 0 broadcasts at t=1 <br>
+1 br at 2 3     // Process 1 braodcasts at t=2 and t=3 <br>
 
 ### Notes:
 1. Always run ```make clean``` before each execution so that previous logs are deleted. Otherwise, the old log files will be appended with new log data.
