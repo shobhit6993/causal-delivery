@@ -7,10 +7,8 @@ function ctrl_c() {
 
 
 }
-./process0 0 &
-./process1 1 &
-./process2 2 &
-./process2 3 &
-./process2 4
-
-wait
+./process 0 &
+./process 1 &
+./process 2 &
+./process 3 &
+./process 4
