@@ -48,8 +48,10 @@ This is followed by at max N number of lines, where each line starts with proces
 
 ### Notes:
 1. Always run ```make clean``` before each execution so that previous logs are deleted. Otherwise, the old log files will be appended with new log data.
-2. Repeated execution might be hindered by ports being left open. Use ```lsof -i``` command to see if previous processes are still hogging the ports, and kill them using ```kill -9 PID```
-3. TCP sockets are used for interprocess communication.
-4. All delays are whole numbers, measured in seconds.
-5. If you see error messages on screen, then kill the program and make sure that no other (or previous instances of this program) is using the required ports.
-6. Value of N can be set in the process.h file. If you change N, you have to add LISTEN_PORTi and SEND_PORTi for each new process (beyond the current 5) in process.h file, and add corresponding ports to constuctor of class Process at the beginning of process.cpp
+2. The threads sleep for about 5 seconds in the beginning; so, please be patient.
+3. run.sh has a trap for ```Ctrl+C``` which ensures that process are terminated cleaning and that they do not continue to hog ports after termination. Press ```Ctrl+C``` TWICE to terminate execution, and wait for few seconds for the interupt to clean up the mess.
+4. Repeated execution might be hindered by ports being left open. Use ```lsof -i``` command to see if previous processes are still hogging the ports, and kill them using ```kill -9 PID```
+5. TCP sockets are used for interprocess communication.
+6. All delays are whole numbers, measured in seconds.
+7. If you see error messages on screen, then kill the program and make sure that no other (or previous instances of this program) is using the required ports.
+8. Value of N can be set in the process.h file. If you change N, you have to add LISTEN_PORTi and SEND_PORTi for each new process (beyond the current 5) in process.h file, and add corresponding ports to constuctor of class Process at the beginning of process.cpp
