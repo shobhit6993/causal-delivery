@@ -46,6 +46,8 @@ This is followed by at max N number of lines, where each line starts with proces
 >0 br at 1       // Process 0 broadcasts at t=1 <br>
 1 br at 2 3     // Process 1 braodcasts at t=2 and t=3 <br>
 
+To change the number of processes (N), in addition to making appropriate changes to the config file, add ```#define``` for each process' LISTEN_PORT and SEND_PORT in process.h, and add statements for ```port_pid_map.insert()```, ```send_port_no[i]```, and ```listen_port_no[i]``` in the constructor of ```Process``` class at the beginning of process.cpp. In hindsight, I should have read these values from the config file, rather than hardcoding it in the code.
+
 ### Notes:
 1. Always run ```make clean``` before each execution so that previous logs are deleted. Otherwise, the old log files will be appended with new log data.
 2. The threads sleep for about 5 seconds in the beginning; so, please be patient.
